@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: "ci-${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+# Principle of least privilege:
+# - checkout needs contents:read
+# - upload-artifact needs actions:write
+permissions:
+  contents: read
+  actions: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Keep versions explicit for reproducibility (setup.sh will read these)
+  JAVA_VERSION: 17.0.14-tem
+  SBT_VERSION: 1.10.11
+  SCALA_VERSION: 2.13.16
+  OSS_CAD_SUITE_VERSION: 2025-07-09
+  ESPRESSO_REF: master
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout code (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Toolchain cache: sdkman + oss-cad + espresso build/install footprint
+      - name: Cache toolchain (SDKMAN / OSS CAD Suite / Espresso)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sdkman
+            ~/oss-cad-suite-*
+            ~/espresso
+            ~/.local
+          key: toolchain-${{ runner.os }}-${{ env.JAVA_VERSION }}-${{ env.OSS_CAD_SUITE_VERSION }}-${{ hashFiles('scripts/setup.sh') }}
+          restore-keys: |
+            toolchain-${{ runner.os }}-${{ env.JAVA_VERSION }}-${{ env.OSS_CAD_SUITE_VERSION }}-
+            toolchain-${{ runner.os }}-
+
+      # Scala/Mill/Coursier cache: typically the biggest speed win
+      - name: Cache Scala/Mill/Coursier
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/.cache/mill
+            ~/.ivy2/cache
+            ~/.sbt
+          key: scala-${{ runner.os }}-${{ env.JAVA_VERSION }}-${{ hashFiles('build.mill.scala', '**/*.mill.scala', 'mill', 'Makefile') }}
+          restore-keys: |
+            scala-${{ runner.os }}-${{ env.JAVA_VERSION }}-
+            scala-${{ runner.os }}-
+
+      - name: Setup environment
+        run: |
+          set -Eeuo pipefail
+          bash ./scripts/setup.sh --ci
+
+      - name: Print tool versions (debug aid)
+        run: |
+          set -Eeuo pipefail
+          java -version
+          sbt --version || true
+          scala -version || true
+          command -v firtool && firtool --version || true
+          command -v yosys && yosys -V || true
+          command -v verilator && verilator --version || true
+
+      - name: Check formatting (fail fast)
+        run: |
+          set -Eeuo pipefail
+          make check-format
+
+      - name: Generate Verilog
+        run: |
+          set -Eeuo pipefail
+          # Source env to ensure any required vars (not only PATH) are set
+          source "$HOME/oss-cad-suite/environment"
+          make verilog
+
+      - name: Run tests
+        run: |
+          set -Eeuo pipefail
+          source "$HOME/oss-cad-suite/environment"
+          make test
+
+      # Always upload artifacts (even if tests fail) to aid debugging
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: generated/test_artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload generated Verilog
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-verilog
+          path: generated/verilog
+          if-no-files-found: ignore
+          retention-days: 7

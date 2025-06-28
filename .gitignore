@@ -5,10 +5,18 @@
 .metals/
 
 # VS Code
-.vscode/
+.vscode/*
+!.vscode/
+!.vscode/settings.json
 
 # Generated files
 generated/
 
 # Build output
 out/
+
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out

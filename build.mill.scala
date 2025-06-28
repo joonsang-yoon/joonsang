@@ -30,7 +30,9 @@ trait ChiselModule extends ScalaModule with ScalafmtModule { m =>
 }
 
 object TopLevelModule extends ChiselModule { m =>
-  override def moduleDeps = Seq(ExternalModule)
+  override def moduleDeps = Seq(ExternalModule, HardFloat)
 }
 
 object ExternalModule extends ChiselModule
+
+object HardFloat extends ChiselModule

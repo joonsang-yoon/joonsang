@@ -1,0 +1,591 @@
+\documentclass[11pt, a4paper]{article}
+
+% --- PACKAGES ---
+\usepackage{mathtools} % mathtools loads amsmath
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{geometry}
+\usepackage{graphicx}
+
+% --- PAGE LAYOUT ---
+\geometry{margin=1in}
+
+% --- MACROS ---
+\DeclareMathOperator{\Int}{Int}
+
+% --- DOCUMENT METADATA ---
+\title{An Exposition of Digit Recurrence Algorithms}
+\author{Joonsang Yoon}
+\date{\today}
+
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+Digit recurrence algorithms are a class of iterative methods used in digital hardware to compute functions such as division, square root, logarithms, and trigonometric functions.
+The core principle of these algorithms is to generate the result one digit at a time, from most significant to least significant.
+This iterative nature makes them well-suited for hardware implementation.
+
+At each step $j$ of the algorithm, a new digit of the result ($q_{j+1}$ or $s_{j+1}$) is selected.
+This selection is based on the value of a state variable called the \emph{partial remainder} or \emph{residual}, denoted $R_j$.
+The partial remainder is updated in each iteration according to a recurrence relation specific to the function being computed.
+
+A key feature of high-speed digit recurrence algorithms (like SRT division) is the use of a \emph{redundant digit set}.
+Instead of using standard digits $\{0, 1, \ldots, B-1\}$ for a radix-$B$ system, a symmetric set such as $\{-a, \ldots, -1, 0, 1, \ldots, a\}$ is used.
+This redundancy introduces an overlap in the selection intervals for each possible digit.
+
+The overlap allows the next digit to be selected based on a low-precision estimate of the partial remainder, which can be computed very quickly using a carry-save adder.
+This avoids the delay of a full-precision carry-propagate addition in the critical path of the recurrence, enabling high-performance implementations.
+
+
+\section{The Redundancy Factor}
+
+The degree of redundancy in the chosen digit set is quantified by the redundancy factor, $\rho$.
+For a radix-$B$ system using a symmetric digit set $\{-a, \ldots, a\}$, the redundancy factor is defined as:
+\begin{equation}
+  \rho \coloneqq \frac{a}{B-1}
+  \label{eq:redundancy_factor}
+\end{equation}
+
+For the algorithm to function correctly and provide the benefits of redundancy, $\rho$ must be within a specific range:
+\[
+  \rho \in (\tfrac{1}{2}, 1]
+\]
+
+\paragraph{Justification.}
+The redundancy factor determines the amount of overlap between the selection intervals for adjacent result digits.
+Let the selection interval for choosing digit $k$ be $[L_k, U_k)$.
+This means if the estimated partial remainder falls within this range, we select $k$ as the next digit.
+
+For the selection to be possible using a low-precision estimate, the interval for digit $k$ must overlap with the interval for digit $k-1$.
+Specifically, we require the top of the interval for $k-1$ to be greater than the bottom of the interval for $k$, i.e., $U_{k-1} > L_k$.
+
+The condition $\rho > \frac{1}{2}$ is the necessary and sufficient condition to guarantee this overlap for all adjacent digits.
+The upper bound $\rho \leq 1$ (or $a \leq B-1$) is a practical constraint, as using digits with magnitude greater than or equal to the radix is inefficient and can lead to convergence issues.
+
+
+\section{Division by Digit Recurrence}
+
+\subsection{Fundamentals and Normalization}
+
+The goal of division is to compute the quotient $Q$ and remainder $R$ from a dividend $N$ and divisor $D$, satisfying the relation $N = DQ + R$.
+For digit recurrence algorithms, the operands are typically assumed to be normalized fractions.
+A common normalization for radix-2 is:
+\begin{align*}
+  N &\in [\tfrac{1}{4}, \tfrac{1}{2}) \quad \text{(Dividend)} \\
+  D &\in [\tfrac{1}{2}, 1) \quad \text{(Divisor)}
+\end{align*}
+
+This normalization ensures that the resulting quotient $Q = N/D$ is bounded:
+\[
+  Q \in \left(\frac{1/4}{1}, \frac{1/2}{1/2}\right) = (\tfrac{1}{4}, 1)
+\]
+
+This predictable range for the quotient simplifies the algorithm's design.
+The quotient $Q$ is computed iteratively.
+After $j$ steps, we have a partial quotient $Q_j$:
+\[
+  Q_j \coloneqq \sum_{i=0}^{j} q_i B^{-i}
+\]
+where $q_i$ is the digit of the quotient selected at step $i-1$.
+The final quotient after $n$ steps is $Q = Q_n$.
+
+\subsection{Recurrence Relation}
+
+The algorithm's state is maintained by the partial remainder, $R_j$.
+It is defined as the true remainder $(N - D Q_j)$ scaled by $B^j$ to keep it in a convenient integer or fixed-point range:
+\begin{equation}
+  R_j \coloneqq B^j (N - D Q_j)
+  \label{eq:div_rem_def}
+\end{equation}
+
+The final remainder is obtained by un-scaling the final partial remainder: $R = R_n B^{-n}$.
+
+To derive the recurrence relation, we start with the definition of $R_{j+1}$:
+\[
+  R_{j+1} = B^{j+1} (N - D Q_{j+1})
+\]
+
+The partial quotient is updated at each step by adding the newly selected digit $q_{j+1}$:
+\[
+  Q_{j+1} = Q_j + q_{j+1} B^{-(j+1)}
+\]
+
+Substituting this into the expression for $R_{j+1}$:
+\begin{align*}
+  R_{j+1} &= B^{j+1} \left(N - D \left(Q_j + q_{j+1} B^{-(j+1)}\right)\right) \\
+  &= B^{j+1} (N - D Q_j) - B^{j+1} D q_{j+1} B^{-(j+1)} \\
+  &= B \left(B^j (N - D Q_j)\right) - q_{j+1} D \\
+  &= B R_j - q_{j+1} D
+\end{align*}
+
+This gives the fundamental recurrence relation for division:
+\begin{equation}
+  R_{j+1} = B R_j - q_{j+1} D
+  \label{eq:div_recurrence}
+\end{equation}
+
+In each step, the old remainder is shifted (multiplied by the radix $B$) and the product of the new quotient digit and the divisor is subtracted.
+
+\subsection{Error Analysis and Containment Condition}
+
+For the algorithm to converge correctly, the error at each step must be correctable by the subsequent digits of the result.
+This principle is formalized through error analysis, leading to a fundamental \emph{containment condition}.
+
+Let the error at the end of step $j$ be the difference between the true quotient and the partial quotient computed so far:
+\[
+  \varepsilon_j \coloneqq \frac{N}{D} - Q_j
+\]
+where $Q_j = \sum_{i=0}^{j} q_i B^{-i}$.
+The final quotient after $n$ steps is $Q_n = \sum_{i=0}^{n} q_i B^{-i}$.
+
+We can express the error $\varepsilon_j$ in terms of the digits yet to be determined:
+\begin{align*}
+  \varepsilon_j &= \frac{N}{D} - Q_j \\
+  &= \left(Q_n + \left(\frac{N}{D} - Q_n\right)\right) - Q_j \\
+  &= (Q_n - Q_j) + \varepsilon_n \\
+  &= \left(\sum_{i=j+1}^{n} q_i B^{-i}\right) + \varepsilon_n
+\end{align*}
+where $\varepsilon_n$ is the final error after $n$ steps.
+
+For the algorithm to be able to select a valid next digit, the error $\varepsilon_j$ must lie within the range of values that the remaining sum $\sum_{i=j+1}^{n} q_i B^{-i}$ can represent.
+To determine this range, we bound the sum.
+Since each digit $q_i$ is in the set $\{-a, \ldots, a\}$, the magnitude of the sum is bounded by:
+\[
+  \left| \sum_{i=j+1}^{n} q_i B^{-i} \right| \leq \sum_{i=j+1}^{n} a B^{-i} = a B^{-(j+1)} \sum_{k=0}^{n-j-1} B^{-k}
+\]
+
+This is a finite geometric series.
+For the purpose of deriving a step-independent bound, we consider the limit as $n \to \infty$:
+\[
+  \lim_{n\to\infty} a B^{-(j+1)} \frac{1-B^{-(n-j)}}{1-B^{-1}} = a B^{-(j+1)} \frac{1}{1-B^{-1}} = a B^{-(j+1)} \frac{B}{B-1} = \frac{a}{B-1} B^{-j}
+\]
+
+Using the definition of the redundancy factor, $\rho = \frac{a}{B-1}$, the maximum magnitude of the uncomputed part of the quotient is $\rho B^{-j}$.
+Therefore, the range of values representable by the remaining digits is $(-\rho B^{-j}, \rho B^{-j})$.
+
+Ignoring the final error $\varepsilon_n$ (i.e., assuming the algorithm can produce an exact result given infinite precision), the error $\varepsilon_j$ must be contained within this range.
+This gives the fundamental containment condition, which must hold at every step $j$ to ensure convergence:
+\begin{equation}
+  -\rho B^{-j} \leq \varepsilon_j < \rho B^{-j}
+  \label{eq:div_error_bound}
+\end{equation}
+
+The use of a half-open interval is a convention that ensures a unique representation for the boundary cases.
+
+\subsection{Partial Remainder Bounds and Selection Interval}
+
+The containment condition on the error can be translated into a bound on the partial remainder.
+From the definition in Eq.~\eqref{eq:div_rem_def}, we have $R_j = B^j D \varepsilon_j$.
+Applying the error bounds from Eq.~\eqref{eq:div_error_bound}:
+\[
+  B^j D (-\rho B^{-j}) \leq R_j < B^j D (\rho B^{-j})
+\]
+
+This gives the bounds on the partial remainder at every step $j$:
+\begin{equation}
+  -\rho D \leq R_j < \rho D
+  \label{eq:div_rem_bound}
+\end{equation}
+
+This bound must hold for $R_{j+1}$ as well.
+We can use this fact to derive the condition for selecting the next digit, $q_{j+1}$.
+We start with the bound for $R_{j+1}$ and substitute the recurrence relation from Eq.~\eqref{eq:div_recurrence}:
+\begin{align*}
+  -\rho D &\leq R_{j+1} < \rho D \\
+  -\rho D &\leq B R_j - q_{j+1} D < \rho D
+\end{align*}
+
+Adding $q_{j+1} D$ to all parts of the inequality isolates the term $B R_j$:
+\begin{equation}
+  (q_{j+1} - \rho) D \leq B R_j < (q_{j+1} + \rho) D
+  \label{eq:div_selection_interval}
+\end{equation}
+
+This is the \emph{selection interval}.
+It defines the range of values for the shifted partial remainder, $B R_j$, for which a specific digit $q_{j+1}$ is a valid choice.
+The digit selection logic in the hardware implements these inequalities (often in a simplified form) to choose the next quotient digit.
+
+\subsection{Initialization}
+
+The recurrence must begin with an initial partial remainder, $R_0$, that satisfies the bound from Eq.~\eqref{eq:div_rem_bound}.
+The definition is $R_0 = B^0(N - D Q_0) = N - D Q_0$.
+Different choices for the initial partial quotient $Q_0$ and different redundancy factors $\rho$ lead to different initialization schemes.
+
+\begin{description}
+  \item[Case 1: $Q_0 = 0$ and $\rho = 1$] For non-redundant radix 2, we have $R_0 = N$.
+    The required bound is $-D \leq R_0 < D$.
+    Given the normalized ranges $N \in [\tfrac{1}{4}, \tfrac{1}{2})$ and $D \in [\tfrac{1}{2}, 1)$, we can verify:
+    $-D \leq -\tfrac{1}{2} < \tfrac{1}{4} \leq N < \tfrac{1}{2} \leq D$.
+    Thus, the condition $-D < N < D$ is satisfied.
+
+  \item[Case 2: $Q_0 = 0$ and $\rho \in (\tfrac{1}{2}, 1)$] A common initialization is $R_0 = N/2$.
+    This is not derived directly from the definition but is a valid strategy if it meets the bounds.
+    The required bound is $-\rho D \leq R_0 < \rho D$.
+
+    We check if $N/2$ is within this range.
+    Given $N \in [\tfrac{1}{4}, \tfrac{1}{2})$, we have $R_0 = N/2 \in [\tfrac{1}{8}, \tfrac{1}{4})$.
+    The lower bound $-\rho D \leq \tfrac{1}{8}$ is clearly satisfied as $\rho, D > 0$.
+
+    For the upper bound, we need $\tfrac{1}{4} \leq \rho D$.
+    Since $D_{\min} = \tfrac{1}{2}$, the condition becomes $\tfrac{1}{4} \leq \rho/2$, or $\rho \geq \tfrac{1}{2}$.
+    This holds for the specified range of $\rho$.
+    This initialization is common in radix-4 SRT division.
+
+  \item[Case 3: $Q_0 = 1$ and $\rho = 1$] For $B=2$, a variant uses $R_0 = 2N - D$.
+    This can be seen as performing one step of a related recurrence.
+    We verify its validity by checking if it satisfies the bound $-D \leq R_0 < D$.
+    Given $N \in [\tfrac{1}{4}, \tfrac{1}{2})$ and $D \in [\tfrac{1}{2}, 1)$, $R_0 = 2N - D \in [2(\tfrac{1}{4})-1, 2(\tfrac{1}{2})-\tfrac{1}{2}) = [-\tfrac{1}{2}, \tfrac{1}{2})$.
+    Since $D \geq \tfrac{1}{2}$, the interval $[-\tfrac{1}{2}, \tfrac{1}{2})$ is contained within $[-D, D)$, so this is a valid initialization.
+
+  \item[Case 4: $Q_0 = 1$ and $\rho \in (\tfrac{1}{2}, 1)$] Another initialization is $R_0 = N - D/2$.
+    This can be interpreted as choosing an initial partial quotient $Q_0 = 1/2$ (for $B=2$).
+    Then $R_0 = N - D Q_0 = N - D/2$.
+
+    We check this against the bound $-\rho D \leq R_0 < \rho D$.
+    Given the operand ranges, $R_0 = N - D/2 \in [\tfrac{1}{4} - \tfrac{1}{2}, \tfrac{1}{2} - \tfrac{1}{4}) = [-\tfrac{1}{4}, \tfrac{1}{4})$.
+
+    For the bound to hold, we need $\tfrac{1}{4} \leq \rho D$.
+    As shown before, this is true since $\rho > \tfrac{1}{2}$ and $D \geq \tfrac{1}{2}$.
+    This initialization is also valid.
+\end{description}
+
+\subsection{Handling Negative Divisors}
+
+The theory developed so far assumes a positive divisor $D$. For signed division, if the divisor is negative, the bounds and selection intervals are inverted. Assuming a normalized negative divisor:
+\[
+  D \in [-1, -\tfrac{1}{2})
+\]
+The error containment condition is conventionally changed to:
+\[
+  -\rho B^{-j} < \varepsilon_j \leq \rho B^{-j}
+\]
+This leads to an inverted bound on the partial remainder, since $D$ is negative:
+\[
+  \rho D \leq R_j < -\rho D
+\]
+Consequently, the selection interval for the shifted partial remainder $B R_j$ is also inverted:
+\[
+  (q_{j+1} + \rho) D \leq B R_j < (q_{j+1} - \rho) D
+\]
+The logic for handling negative divisors can be implemented either by using these modified rules or by negating the inputs ($N, D$) to make the divisor positive and then adjusting the sign of the final quotient and remainder.
+
+\subsection{Example: Radix-2 SRT Division}
+
+This is a widely used case with radix $B=2$ and digit set $\{-1, 0, 1\}$, so $a=1$. The redundancy factor is:
+\[
+  \rho = \frac{a}{B-1} = \frac{1}{2-1} = 1
+\]
+This is a maximally redundant system. The selection of the next quotient digit $q_{j+1}$ is based on comparing the shifted partial remainder $2R_j$ with multiples of the divisor $D$.
+
+\subsubsection{Positive Divisor}
+
+For a positive divisor $D \in [\tfrac{1}{2}, 1)$, the ideal selection function is:
+\[
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 0 \leq 2R_j < 2D, \\
+    0  & \text{if } -D \leq 2R_j < D, \\
+    -1 & \text{if } -2D \leq 2R_j < 0.
+  \end{cases}
+\]
+To avoid a full-precision comparison, $2R_j$ is kept in a redundant carry-save format, $2R_j = Y_j + Z_j$, where $Y_j$ is the sum vector and $Z_j$ is the carry vector.
+\[
+  2R_j = r_{j,1}r_{j,0}.r_{j,-1}r_{j,-2}r_{j,-3}\cdots = Y_j + Z_j
+\]
+The overlap between selection intervals is $U_{k-1} - L_k = (k - 1 + \rho) D - (k - \rho) D = (2\rho - 1) D = D$. This overlap allows the selection to be based on a truncated estimate of $2R_j$. We truncate the carry-save representation after a few fractional bits. The error introduced by this truncation is bounded:
+\[
+  0 \leq y_{j,-3}y_{j,-4}\cdots + z_{j,-3}z_{j,-4}\cdots < \tfrac{1}{2} \leq D
+\]
+The selection is performed on a truncated sum $t_j$ and a truncated divisor. Let $t_j$ be the sum of the 4 most significant bits of $Y_j$ and $Z_j$:
+\[
+  t_{j,1}t_{j,0}.t_{j,-1}t_{j,-2} = y_{j,1}y_{j,0}.y_{j,-1}y_{j,-2} + z_{j,1}z_{j,0}.z_{j,-1}z_{j,-2}
+\]
+This gives the relation $t_{j,1}t_{j,0}.t_{j,-1}t_{j,-2} \leq 2R_j < t_{j,1}t_{j,0}.t_{j,-1}t_{j,-2} + \frac{1}{2}$.
+For a hardware lookup table, these values are scaled to integers. Let $\tau_j$ be the scaled estimate of $8R_j$ and $\delta$ be the scaled estimate of $4D$:
+\begin{align*}
+  \tau_j &= \Int(4 \cdot t_{j,1}t_{j,0}.t_{j,-1}t_{j,-2}) \in \{-8, -7, \ldots, 7\} \quad (\tau_j \leq 8R_j < \tau_j + 2) \\
+  \delta &= \Int(4 \cdot 0.1d_{-2}) \in \{2, 3\} \quad (\delta \leq 4D < \delta + 1)
+\end{align*}
+The practical selection function, implemented in a PLA or logic gates, becomes:
+\[
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 0 \leq \tau_j < 2(\delta + 1), \\
+    0  & \text{if } -\delta \leq \tau_j \leq \delta - 2, \\
+    -1 & \text{if } -2(\delta + 1) - 2 < \tau_j \leq -2.
+  \end{cases}
+\]
+
+\subsubsection{Negative Divisor}
+
+For a negative divisor $D \in [-1, -\tfrac{1}{2})$, the selection intervals are inverted.
+\[
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 2D \leq 2R_j < 0, \\
+    0  & \text{if } D \leq 2R_j < -D, \\
+    -1 & \text{if } 0 \leq 2R_j < -2D.
+  \end{cases}
+\]
+The overlap is $U_k - L_{k-1} = (k - \rho) D - (k - 1 + \rho) D = (1 - 2\rho) D = -D$, which is positive. The truncation error bound still holds: $0 \leq \text{error} < \frac{1}{2} \leq -D$. The scaled integer estimate of the divisor becomes:
+\[
+  \delta = \Int(4 \cdot 1.0d_{-2}) \in \{-4, -3\} \quad (\delta \leq 4D < \delta + 1)
+\]
+The practical selection function for a negative divisor is:
+\[
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 2\delta - 2 < \tau_j \leq -2, \\
+    0  & \text{if } \delta + 1 \leq \tau_j \leq -(\delta + 1) - 2, \\
+    -1 & \text{if } 0 \leq \tau_j < -2\delta.
+  \end{cases}
+\]
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth, height=0.9\textheight, keepaspectratio=true]{../figures/division/radix2_qds_basic_quadrants_1_2_3_4.png}
+  \caption{Practical quotient-digit selection function for Radix-2 SRT division. The plot shows the selected digit $q_{j+1}$ based on the truncated, scaled partial remainder estimate $\tau_j$ and divisor estimate $\delta$. This implementation does not optimize for overlap removal.}
+  \label{fig:radix2_qds_basic}
+\end{figure}
+
+\subsection{Example: Radix-4 SRT Division}
+
+To speed up division, a higher radix can be used. For radix $B=4$, a common choice for the digit set is $\{-2, -1, 0, 1, 2\}$, so $a=2$. The redundancy factor is:
+\[
+  \rho = \frac{a}{B-1} = \frac{2}{4-1} = \frac{2}{3}
+\]
+Since $\rho \in (\tfrac{1}{2}, 1]$, the algorithm works. The recurrence uses the shifted remainder $4R_j$.
+
+\subsubsection{Positive Divisor}
+
+For $D \in [\tfrac{1}{2}, 1)$, the ideal selection function for $q_{j+1} \in \{-2, \ldots, 2\}$ is:
+\[
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \tfrac{4}{3}D \leq 4R_j < \tfrac{8}{3}D, \\
+    1  & \text{if } \tfrac{1}{3}D \leq 4R_j < \tfrac{5}{3}D, \\
+    0  & \text{if } -\tfrac{2}{3}D \leq 4R_j < \tfrac{2}{3}D, \\
+    -1 & \text{if } -\tfrac{5}{3}D \leq 4R_j < -\tfrac{1}{3}D, \\
+    -2 & \text{if } -\tfrac{8}{3}D \leq 4R_j < -\tfrac{4}{3}D.
+  \end{cases}
+\]
+The overlap between adjacent intervals is $(2\rho - 1)D = (\frac{4}{3}-1)D = \frac{1}{3}D$. The remainder $4R_j$ is kept in carry-save form. To ensure the truncation error is less than the overlap, more bits of the remainder and divisor must be inspected. A typical implementation truncates after 4 fractional bits.
+\[
+  t_{j,2}t_{j,1}t_{j,0}.t_{j,-1..-4} = y_{j,2..0}.y_{j,-1..-4} + z_{j,2..0}.z_{j,-1..-4}
+\]
+The truncation error is bounded by $2 \cdot 2^{-4} = \frac{1}{8}$, which is less than the minimum overlap $\frac{1}{3}D_{\min} = \frac{1}{6}$. The scaled integer estimates are:
+\begin{align*}
+  \tau_j &= \Int(16 \cdot t_{j,2..0}.t_{j,-1..-4}) \in \{-64, \ldots, 63\} \quad (\tau_j \leq 64R_j < \tau_j + 2) \\
+  \delta &= \Int(16 \cdot 0.1d_{-2}d_{-3}d_{-4}) \in \{8, \ldots, 15\} \quad (\delta \leq 16D < \delta + 1)
+\end{align*}
+The practical selection function becomes a more complex lookup table:
+\[
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \tfrac{4}{3}(\delta + 1) \leq \tau_j < \tfrac{8}{3}(\delta + 1), \\
+    1  & \text{if } \tfrac{1}{3}(\delta + 1) \leq \tau_j \leq \tfrac{5}{3}\delta - 2, \\
+    0  & \text{if } -\tfrac{2}{3}\delta \leq \tau_j \leq \tfrac{2}{3}\delta - 2, \\
+    -1 & \text{if } -\tfrac{5}{3}\delta \leq \tau_j \leq -\tfrac{1}{3}(\delta + 1) - 2, \\
+    -2 & \text{if } -\tfrac{8}{3}(\delta + 1) - 2 < \tau_j \leq -\tfrac{4}{3}(\delta + 1) - 2.
+  \end{cases}
+\]
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth, height=0.9\textheight, keepaspectratio=true]{../figures/division/radix4_qds_basic_quadrants_1_4.png}
+  \caption{Practical selection function for Radix-4 SRT division with a positive divisor. The regions correspond to selecting digits $\{-2, -1, 0, 1, 2\}$ based on the estimates $\tau_j$ and $\delta$.}
+  \label{fig:radix4_qds_basic_pos}
+\end{figure}
+
+\subsubsection{Negative Divisor}
+
+For a negative divisor $D \in [-1, -\tfrac{1}{2})$, the selection intervals are inverted:
+\[
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \tfrac{8}{3}D \leq 4R_j < \tfrac{4}{3}D, \\
+    1  & \text{if } \tfrac{5}{3}D \leq 4R_j < \tfrac{1}{3}D, \\
+    0  & \text{if } \tfrac{2}{3}D \leq 4R_j < -\tfrac{2}{3}D, \\
+    -1 & \text{if } -\tfrac{1}{3}D \leq 4R_j < -\tfrac{5}{3}D, \\
+    -2 & \text{if } -\tfrac{4}{3}D \leq 4R_j < -\tfrac{8}{3}D.
+  \end{cases}
+\]
+The overlap is $(1-2\rho)D = -\frac{1}{3}D > 0$. The scaled divisor estimate becomes:
+\[
+  \delta = \Int(16 \cdot 1.0d_{-2}d_{-3}d_{-4}) \in \{-16, \ldots, -9\} \quad (\delta \leq 16D < \delta + 1)
+\]
+The practical selection function for a negative divisor is:
+\[
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \tfrac{8}{3}\delta - 2 < \tau_j \leq \tfrac{4}{3}\delta - 2, \\
+    1  & \text{if } \tfrac{5}{3}(\delta + 1) \leq \tau_j \leq \tfrac{1}{3}\delta - 2, \\
+    0  & \text{if } \tfrac{2}{3}(\delta + 1) \leq \tau_j \leq -\tfrac{2}{3}(\delta + 1) - 2, \\
+    -1 & \text{if } -\tfrac{1}{3}\delta \leq \tau_j \leq -\tfrac{5}{3}(\delta + 1) - 2, \\
+    -2 & \text{if } -\tfrac{4}{3}\delta \leq \tau_j < -\tfrac{8}{3}\delta.
+  \end{cases}
+\]
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth, height=0.9\textheight, keepaspectratio=true]{../figures/division/radix4_qds_basic_quadrants_2_3.png}
+  \caption{Practical selection function for Radix-4 SRT division with a negative divisor. The selection regions are inverted compared to the positive divisor case.}
+  \label{fig:radix4_qds_basic_neg}
+\end{figure}
+
+\subsubsection{Optimized Selection Function with Overlap Removal}
+
+The selection function can be further optimized by exploiting the redundancy in the digit set. The overlap regions between selection intervals allow for flexibility. By carefully reassigning points in the overlap regions, the logic for the selection function can be simplified. For example, regions can be made more rectangular, or certain digit selections can be favored to simplify the logic that generates the multiples of the divisor. This process is known as overlap removal or P-D plot optimization. Figures~\ref{fig:radix4_qds_opt_pos} and~\ref{fig:radix4_qds_opt_neg} show an example of such an optimized selection function.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth, height=0.9\textheight, keepaspectratio=true]{../figures/division/radix4_qds_optimized_quadrants_1_4.png}
+  \caption{Optimized selection function for Radix-4 SRT division with a positive divisor. The boundaries of the selection regions have been adjusted to simplify the implementation logic.}
+  \label{fig:radix4_qds_opt_pos}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth, height=0.9\textheight, keepaspectratio=true]{../figures/division/radix4_qds_optimized_quadrants_2_3.png}
+  \caption{Optimized selection function for Radix-4 SRT division with a negative divisor.}
+  \label{fig:radix4_qds_opt_neg}
+\end{figure}
+
+
+\section{Square Root by Digit Recurrence}
+
+\subsection{Fundamentals and Normalization}
+
+The square root algorithm computes the root $S$ of a radicand $X$, satisfying $X = S^2 + R$, where $R$ is the remainder.
+Operands are normalized, typically to:
+\begin{align*}
+  X &\in [\tfrac{1}{4}, 1) \quad \text{(Radicand)} \\
+  S &\in [\tfrac{1}{2}, 1) \quad \text{(Square Root)}
+\end{align*}
+
+The partial root $S_j$ after $j$ steps is $S_j \coloneqq \sum_{i=0}^{j} s_i B^{-i}$.
+
+\subsection{Recurrence Relation}
+
+The partial remainder for square root is defined analogously to division:
+\begin{equation}
+  R_j \coloneqq B^j (X - S_j^2)
+  \label{eq:sqrt_rem_def}
+\end{equation}
+
+To derive the recurrence, we start with the definition of $R_{j+1}$ and substitute the update rule for the partial root, $S_{j+1} = S_j + s_{j+1} B^{-(j+1)}$:
+\begin{align*}
+  R_{j+1} &= B^{j+1} \left(X - S_{j+1}^2\right) \\
+  &= B^{j+1} \left(X - \left(S_j + s_{j+1} B^{-(j+1)}\right)^2\right) \\
+  &= B^{j+1} \left(X - \left(S_j^2 + 2 S_j s_{j+1} B^{-(j+1)} + s_{j+1}^2 B^{-2(j+1)}\right)\right) \\
+  &= B^{j+1} (X - S_j^2) - B^{j+1} \left(2 S_j s_{j+1} B^{-(j+1)} + s_{j+1}^2 B^{-2(j+1)}\right) \\
+  &= B \left(B^j (X - S_j^2)\right) - \left(2 S_j s_{j+1} + s_{j+1}^2 B^{-(j+1)}\right) \\
+  &= B R_j - s_{j+1} \left(2 S_j + s_{j+1} B^{-(j+1)}\right)
+\end{align*}
+
+This gives the recurrence relation for square root:
+\begin{equation}
+  R_{j+1} = B R_j - s_{j+1} \left(2 S_j + s_{j+1} B^{-(j+1)}\right)
+  \label{eq:sqrt_recurrence}
+\end{equation}
+
+Unlike division, the subtracted term depends on the partial root $S_j$ and the new digit $s_{j+1}$ itself.
+
+\subsection{Error Analysis and Partial Remainder Bounds}
+
+The error analysis is identical to division.
+The error $\varepsilon_j = \sqrt{X} - S_j$ must satisfy the same containment condition:
+\[
+  -\rho B^{-j} \leq \varepsilon_j < \rho B^{-j}
+\]
+
+To find the bounds on the partial remainder $R_j$, we substitute $\sqrt{X} = S_j + \varepsilon_j$ (so $X = (S_j + \varepsilon_j)^2$) into the definition of $R_j$:
+\begin{align*}
+  R_j &= B^j (X - S_j^2) \\
+  &= B^j \left((S_j + \varepsilon_j)^2 - S_j^2\right) \\
+  &= B^j \left(S_j^2 + 2 S_j \varepsilon_j + \varepsilon_j^2 - S_j^2\right) \\
+  &= B^j \left(2 S_j \varepsilon_j + \varepsilon_j^2\right)
+\end{align*}
+
+The function $f(\varepsilon) = 2 S_j \varepsilon + \varepsilon^2$ is a parabola opening upwards.
+For the small interval $[-\rho B^{-j}, \rho B^{-j})$ where $\varepsilon_j$ lies, and for $S_j > 0$, this function is monotonically increasing.
+Thus, we can find the bounds on $R_j$ by substituting the lower and upper bounds of $\varepsilon_j$:
+\begin{align*}
+  R_{j, \text{min}} &= B^j \left(2 S_j (-\rho B^{-j}) + (-\rho B^{-j})^2\right) = -2 \rho S_j + \rho^2 B^{-j} \\
+  R_{j, \text{max}} &< B^j \left(2 S_j (\rho B^{-j}) + (\rho B^{-j})^2\right) = 2 \rho S_j + \rho^2 B^{-j}
+\end{align*}
+
+This gives the bounds on the partial remainder for square root:
+\begin{equation}
+  \rho^2 B^{-j} - 2 \rho S_j \leq R_j < \rho^2 B^{-j} + 2 \rho S_j
+  \label{eq:sqrt_rem_bound}
+\end{equation}
+
+\subsection{Selection Interval}
+
+The selection interval is derived by applying the bounds for step $j+1$ to the recurrence relation.
+Let $W_j = B R_j$.
+The condition on $R_{j+1}$ is:
+\[
+  \rho^2 B^{-(j+1)} - 2 \rho S_{j+1} \leq R_{j+1} < \rho^2 B^{-(j+1)} + 2 \rho S_{j+1}
+\]
+
+Substituting $R_{j+1} = W_j - s_{j+1}(2S_j + s_{j+1}B^{-(j+1)})$ and isolating $W_j$:
+\[
+  \rho^2 B^{-(j+1)} - 2 \rho S_{j+1} + s_{j+1}(2S_j + s_{j+1}B^{-(j+1)}) \leq W_j
+\]
+
+Now substitute $S_{j+1} = S_j + s_{j+1}B^{-(j+1)}$ into the lower bound:
+\begin{align*}
+  W_j &\geq \rho^2 B^{-(j+1)} - 2 \rho (S_j + s_{j+1}B^{-(j+1)}) + 2s_{j+1}S_j + s_{j+1}^2 B^{-(j+1)} \\
+  &= -2\rho S_j + 2s_{j+1}S_j + B^{-(j+1)}(\rho^2 - 2\rho s_{j+1} + s_{j+1}^2) \\
+  &= 2(s_{j+1}-\rho)S_j + (s_{j+1}-\rho)^2 B^{-(j+1)}
+\end{align*}
+
+A similar derivation for the upper bound yields:
+\[
+  W_j < 2(s_{j+1}+\rho)S_j + (s_{j+1}+\rho)^2 B^{-(j+1)}
+\]
+
+This gives the complete selection interval for the shifted remainder $B R_j$:
+\begin{equation}
+  2(s_{j+1}-\rho)S_j + (s_{j+1}-\rho)^2 B^{-(j+1)} \leq B R_j < 2(s_{j+1}+\rho)S_j + (s_{j+1}+\rho)^2 B^{-(j+1)}
+\end{equation}
+
+\subsection{Initialization}
+
+The initial remainder $R_0 = X - S_0^2$ must satisfy the bounds from Eq.~\eqref{eq:sqrt_rem_bound} for $j=0$. The form of this bound depends on the choice of $S_0$.
+\begin{description}
+  \item[For $S_0 = 0$] The general bound formula is problematic. We must re-evaluate $R_j = B^j(2S_j\varepsilon_j + \varepsilon_j^2)$ for $S_j=0$. This gives $R_j = B^j \varepsilon_j^2$. Since $\varepsilon_j \in [-\rho B^{-j}, \rho B^{-j})$, we have $0 \leq \varepsilon_j^2 < (\rho B^{-j})^2$. Thus, for $S_0=0$ (and $j=0$), the bound is $0 \leq R_0 < \rho^2$.
+
+  \item[For $S_0 \neq 0$] For $j=0$, the bound is $\rho^2 - 2\rho S_0 \leq R_0 < \rho^2 + 2\rho S_0$. For the common choice $S_0=1$, this becomes $\rho^2 - 2\rho \leq R_0 < \rho^2 + 2\rho$.
+\end{description}
+
+Let's verify some specific initializations.
+\begin{description}
+  \item[Case 1: $S_0 = 0$ and $\rho = 1$] The initialization is $R_0 = X$.
+    The required bound is $0 \leq R_0 < 1^2$, or $[0, 1)$.
+    The normalized radicand $X \in [\tfrac{1}{4}, 1)$ is within this bound. This is valid.
+
+  \item[Case 2: $S_0 = 0$ and $\rho \in (\tfrac{1}{2}, 1)$] The initialization is $R_0 = X/4$.
+    The required bound is $0 \leq R_0 < \rho^2$.
+    Given $X \in [\tfrac{1}{4}, 1)$, $R_0 = X/4 \in [\tfrac{1}{16}, \tfrac{1}{4})$.
+    The condition becomes $\tfrac{1}{4} \leq \rho^2$, or $\rho \geq \tfrac{1}{2}$, which is true. This is valid.
+
+  \item[Case 3: $S_0 = 1$] The initialization is $R_0 = X - S_0^2 = X - 1$.
+    The required bound is $[\rho^2 - 2\rho, \rho^2 + 2\rho)$.
+    Given $X \in [\tfrac{1}{4}, 1)$, $R_0 = X-1 \in [-\tfrac{3}{4}, 0)$.
+    We must check if $[-\tfrac{3}{4}, 0)$ is contained in $[\rho^2 - 2\rho, \rho^2 + 2\rho)$.
+    \begin{itemize}
+      \item Lower bound: We need $\rho^2 - 2\rho \leq -\tfrac{3}{4}$. This is $4\rho^2 - 8\rho + 3 \leq 0$. The roots of $4y^2-8y+3=0$ are $y=\tfrac{1}{2}, \tfrac{3}{2}$. The inequality holds for $\rho \in [\tfrac{1}{2}, \tfrac{3}{2}]$. Since our $\rho \in (\tfrac{1}{2}, 1]$, this condition is satisfied.
+
+      \item Upper bound: We need $0 \leq \rho^2 + 2\rho$. This is true for all $\rho > 0$.
+    \end{itemize}
+    The initialization is therefore valid for all allowed values of $\rho$.
+\end{description}
+
+\end{document}

@@ -1,0 +1,1899 @@
+\documentclass[11pt]{article}
+
+% --- Typography and Layout ---
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\setlength{\emergencystretch}{2em}
+\widowpenalty=10000
+\clubpenalty=10000
+\displaywidowpenalty=10000
+
+% --- Math Packages ---
+\usepackage{mathtools}
+\usepackage{amssymb}
+\allowdisplaybreaks[2]
+
+% --- Figures and Tables ---
+\usepackage{graphicx}
+\usepackage{subcaption}
+\captionsetup{font=small,labelfont=bf}
+\captionsetup[subfigure]{font=small}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+
+% --- Lists ---
+\usepackage{enumitem}
+\setlist{topsep=0.4em,itemsep=0.2em,parsep=0pt}
+
+% --- Referencing and Links ---
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue,
+  pdftitle={A Worked Tutorial on Digit-Recurrence Algorithms for Division and Square Root},
+  pdfauthor={Joonsang Yoon},
+  pdfsubject={Digit-recurrence division and square root},
+  pdfkeywords={SRT, digit recurrence, division, square root, radix-2, radix-4},
+  bookmarksopen=true,
+  bookmarksnumbered=true,
+}
+
+% --- Math helpers ---
+\DeclareMathOperator{\Int}{Int}
+\newcommand{\ulp}{\mathrm{ulp}}
+\newcommand{\QDS}{\textsc{QDS}}
+\newcommand{\RDS}{\textsc{RDS}}
+\newcommand{\CPA}{\textsc{CPA}}
+
+% --- Cross-reference names ---
+\crefname{equation}{eq.}{eqs.}
+\Crefname{equation}{Eq.}{Eqs.}
+\crefname{figure}{fig.}{figs.}
+\Crefname{figure}{Fig.}{Figs.}
+\crefname{table}{tab.}{tabs.}
+\Crefname{table}{Tab.}{Tabs.}
+
+\numberwithin{equation}{section}
+
+\title{A Worked Tutorial on Digit-Recurrence Algorithms\\for Division and Square Root}
+\author{Joonsang Yoon}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Digit-recurrence algorithms, especially those in the SRT (Sweeney, Robertson, and Tocher) family,
+remain a standard approach to high-speed hardware division and square root.
+They generate one output digit per iteration while maintaining a scaled residual inside a bounded
+interval.
+Their central hardware advantage is redundancy: signed digit sets such as $\{-1,0,1\}$ or
+$\{-2,-1,0,1,2\}$ create overlap between adjacent digit-selection regions, so the next digit can be
+chosen from truncated estimates of the residual, divisor, or partial root rather than from an exact
+full-width carry-propagated value.
+
+This tutorial develops division and square root in parallel.
+For each operation it derives the result expansion, the scaled residual recurrence, the containment
+condition, the exact digit-selection intervals, and practical selector tables built from truncated
+state.
+Worked radix-2 and radix-4 examples connect the algebra to concrete hardware logic, and a final
+section shows how deterministic overlap resolution can simplify the selector.
+\end{abstract}
+
+\clearpage
+
+\tableofcontents
+
+\clearpage
+
+\section{Introduction}
+\label{sec:introduction}
+
+Division and square root are fundamentally iterative in hardware.
+Unlike addition, which can often be completed in a shallow constant-depth network, or
+multiplication, whose partial-product reduction is mostly feed-forward, division and square root
+repeatedly update an internal state.
+Each iteration must do two things:
+\begin{enumerate}
+  \item choose the next result digit, and
+  \item update the residual (partial remainder).
+\end{enumerate}
+The latency of the unit is therefore dominated by this per-iteration loop.
+
+The central difficulty is digit selection.
+With a nonredundant digit set, the selector would have to know the residual accurately enough to
+distinguish between adjacent regions with essentially no tolerance for uncertainty.
+That requirement usually pulls a full carry-propagating addition into the critical path.
+SRT-style digit-recurrence algorithms avoid that cost by using a redundant signed-digit set.
+Redundancy creates overlap between neighboring valid regions.
+Inside such an overlap, more than one digit is acceptable, so the selector may safely use truncated
+estimates of the residual and of the divisor or partial root.
+That slack is what makes a carry-save residual practical.
+
+Two tutorial conventions are worth stating up front.
+First, we intentionally normalize operands more tightly than the most general SRT theory requires.
+For division we use
+\[
+  N \in \left(0,\frac{1}{4}\right),
+  \qquad
+  D \in \left[\frac{1}{2},1\right)
+  \text{ or }
+  D \in \left[-1,-\frac{1}{2}\right),
+\]
+and for square root we use
+\[
+  X \in \left[\frac{1}{4},1\right).
+\]
+These choices are pedagogical: they keep the startup step simple, so the tutorial can focus on the
+recurrence and selector construction rather than on prescaling details.
+When $D<0$, the quotient sign is absorbed directly into the signed-digit expansion, so the later
+negative-divisor selector tables are not a different algorithm but the reflected version of the
+same construction.
+Second, whenever we convert a truncated fixed-point word into an integer table index, we write
+$\Int(\cdot)$ for ``remove the binary point and interpret the result as an integer.''
+
+The rest of the tutorial is organized as follows.
+\Cref{sec:preliminaries} introduces notation, digit sets, and the redundancy factor.
+\Cref{sec:division} develops division from first principles and works through radix-2 and radix-4
+selectors.
+\Cref{sec:sqrt} repeats the same program for square root, highlighting the additional dependence on
+the evolving partial root.
+\Cref{sec:optimized_overlap} explains how overlap can be resolved deterministically to simplify the
+hardware selector, and \cref{sec:conclusion} summarizes the main design lessons.
+
+\clearpage
+
+\section{Preliminaries and Tutorial Conventions}
+\label{sec:preliminaries}
+
+\subsection{Notation used throughout}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Symbols used repeatedly in the tutorial.}
+  \label{tab:notation}
+  \renewcommand{\arraystretch}{1.2}
+  \begin{tabularx}{\textwidth}{l >{\raggedright\arraybackslash}X}
+    \toprule
+    Symbol & Meaning \\
+    \midrule
+    $B$ & Radix of the digit-recurrence algorithm. In the worked examples, $B \in \{2,4\}$. \\
+    $a$ & Maximum digit magnitude in the symmetric digit set $\{-a,-a+1,\dotsc,a-1,a\}$. \\
+    $\rho$ & Redundancy factor, defined by $\rho = a/(B-1)$. Overlap exists when $\rho > 1/2$. \\
+    $Q_j$, $q_{j+1}$ & Quotient approximation after $j$ selected digits, and the next quotient digit. \\
+    $S_j$, $s_{j+1}$ & Partial-root approximation after $j$ selected digits, and the next root digit. \\
+    $R_j$ & Scaled residual (partial remainder) at iteration $j$. \\
+    $N$, $D$, $X$ & Dividend, divisor, and radicand. \\
+    $t_j$ & Truncated estimate of the shifted residual used by the digit selector. \\
+    $\tau_j$ & Integerized version of the truncated residual estimate. \\
+    $\delta$ & Integerized truncated divisor estimate used by the quotient selector. \\
+    $\sigma_j$ & Integerized truncated partial-root estimate used by the root selector. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Redundant signed-digit sets}
+\label{ssec:preliminaries:redundancy}
+
+For both division and square root we choose each new digit from a symmetric signed-digit set
+\begin{equation}
+  \label{eq:preliminaries:digit_set}
+  d_{j+1} \in \{-a,-a+1,\dotsc,a-1,a\},
+\end{equation}
+where $d_{j+1}$ stands for either $q_{j+1}$ or $s_{j+1}$ depending on the context.
+The corresponding redundancy factor is
+\begin{equation}
+  \label{eq:preliminaries:rho_def}
+  \rho = \frac{a}{B-1}.
+\end{equation}
+
+The basic design rule is
+\begin{equation}
+  \label{eq:preliminaries:rho_gt_half}
+  \rho > \frac{1}{2}.
+\end{equation}
+To see why this matters, suppose the ideal selector says that digit $k$ is valid whenever the
+residual lies in an interval of the form
+\[
+  L_k \le \text{residual} \le U_k,
+\]
+and digit $k+1$ is valid whenever
+\[
+  L_{k+1} \le \text{residual} \le U_{k+1}.
+\]
+When $\rho > 1/2$, these adjacent intervals overlap:
+\[
+  U_k > L_{k+1}.
+\]
+That overlap is exactly the slack that allows truncated selection.
+If $\rho = 1/2$, the intervals merely touch; if $\rho < 1/2$, they separate and the selector must
+know the residual more precisely.
+
+In practice one usually chooses
+\begin{equation}
+  \label{eq:preliminaries:rho_range}
+  \frac{1}{2} < \rho \le 1,
+\end{equation}
+which is equivalent to
+\begin{equation}
+  \label{eq:preliminaries:a_range}
+  \frac{B-1}{2} < a \le B-1.
+\end{equation}
+The upper end $\rho = 1$ is maximally redundant; values closer to $1/2$ are minimally redundant.
+More redundancy increases overlap but also enlarges the set of digit multiples that must be formed
+in the datapath.
+
+\subsection{Why the tutorial normalizations are slightly tighter}
+\label{ssec:preliminaries:normalization}
+
+The SRT framework itself is more general than the specific normalizations used here.
+In a floating-point implementation, exponents are handled separately and the significands are then
+scaled into a convenient interval.
+This tutorial assumes the already-normalized cases
+\begin{align}
+  \label{eq:preliminaries:division_norm}
+  N &\in \left(0,\frac{1}{4}\right),
+  &
+  D &\in \left[\frac{1}{2},1\right)
+  \text{ or }
+  D \in \left[-1,-\frac{1}{2}\right), \\
+  \label{eq:preliminaries:sqrt_norm}
+  X &\in \left[\frac{1}{4},1\right).
+\end{align}
+These bounds imply
+\[
+  0 < \left|\frac{N}{D}\right| < \frac{1}{2},
+\]
+and
+\[
+  \sqrt{X} \in \left[\frac{1}{2},1\right).
+\]
+As a result, division can start from $Q_0 = 0$ and square root can start from $S_0 = 1$.
+The payoff is a cleaner presentation: the initialization algebra stays transparent, the startup
+cases stay small, and the tutorial can spend its time on the recurrence itself rather than on
+prescaling machinery.
+
+\subsection{A three-step recipe for building a practical selector}
+\label{ssec:preliminaries:recipe}
+
+Each worked example in \cref{sec:division,sec:sqrt} follows the same pattern.
+\begin{enumerate}
+  \item Derive the exact residual recurrence and the exact interval that makes a candidate digit
+        valid.
+  \item Replace the exact residual (and the divisor or partial root) with truncated estimates.
+        The resulting uncertainty must still fit inside the overlap between neighboring exact
+        intervals.
+  \item Convert the truncated fixed-point quantities into small integers $\tau_j$, $\delta$, and
+        $\sigma_j$, and write the final selector logic as integer inequalities.
+\end{enumerate}
+The continuity condition introduced later is the formal statement of Step 2.
+It guarantees that after truncation there is still at least one valid digit in every state box of
+the selector.
+
+\clearpage
+
+\section{Division by Digit Recurrence}
+\label{sec:division}
+
+We begin from the exact relation
+\begin{equation}
+  \label{eq:division:relation}
+  N = DQ_n + r,
+\end{equation}
+where $N$ is the dividend, $D$ the divisor, $Q_n$ the final quotient, and $r$ the final
+\emph{unscaled} remainder.
+
+\subsection{Quotient expansion}
+\label{ssec:division:quotient_expansion}
+
+Let $Q_j$ denote the quotient after $j$ selected digits.
+The next digit update is
+\begin{equation}
+  \label{eq:division:quotient_recurrence}
+  Q_{j+1} = Q_j + q_{j+1}B^{-(j+1)}.
+\end{equation}
+Repeated substitution gives
+\begin{equation}
+  \label{eq:division:quotient_unfolded}
+  Q_{j+1} = Q_0 + \sum_{i=0}^{j} q_{i+1}B^{-(i+1)},
+\end{equation}
+and therefore
+\begin{equation}
+  \label{eq:division:quotient_final}
+  Q_n = Q_0 + \sum_{i=0}^{n-1} q_{i+1}B^{-(i+1)}.
+\end{equation}
+
+\subsection{Approximation error and containment}
+\label{ssec:division:error_and_containment}
+
+Define the quotient error after $j+1$ selected digits by
+\begin{equation}
+  \label{eq:division:error_def}
+  \varepsilon_{j+1} = \frac{N}{D} - Q_{j+1}.
+\end{equation}
+Substituting \cref{eq:division:quotient_unfolded} into the exact radix expansion of the true
+quotient shows that the error is the tail of the digit series:
+\begin{equation}
+  \label{eq:division:error_tail}
+  \varepsilon_{j+1} = \sum_{i=j+1}^{\infty} q_{i+1}B^{-(i+1)}.
+\end{equation}
+Because every digit satisfies $|q_{i+1}| \le a$,
+\begin{align}
+  \left|\varepsilon_{j+1}\right|
+  &= \left|\sum_{i=j+1}^{\infty} q_{i+1}B^{-(i+1)}\right| \nonumber \\
+  &\le \sum_{i=j+1}^{\infty} a B^{-(i+1)} \nonumber \\
+  &= a B^{-(j+2)} \sum_{k=0}^{\infty} B^{-k} \nonumber \\
+  &= a B^{-(j+2)} \cdot \frac{1}{1-B^{-1}} \nonumber \\
+  &= \frac{a}{B-1} B^{-(j+1)} \nonumber \\
+  &= \rho B^{-(j+1)}.
+  \label{eq:division:error_bound}
+\end{align}
+Thus
+\begin{equation}
+  \label{eq:division:error_bound_simple}
+  \left|\frac{N}{D}-Q_{j+1}\right| \le \rho B^{-(j+1)}.
+\end{equation}
+Multiplying by the positive quantity $B^{j+1}|D|$ gives the scaled form used in hardware:
+\begin{equation}
+  \label{eq:division:scaled_error_bound}
+  \left|B^{j+1}(N-DQ_{j+1})\right| \le \rho |D|.
+\end{equation}
+This motivates the scaled residual
+\begin{equation}
+  \label{eq:division:residual_def}
+  R_{j+1} = B^{j+1}(N-DQ_{j+1}),
+\end{equation}
+for which the containment condition is simply
+\begin{equation}
+  \label{eq:division:containment}
+  |R_{j+1}| \le \rho |D|.
+\end{equation}
+At the end of the algorithm,
+\begin{equation}
+  \label{eq:division:final_remainder}
+  R_n = B^n(N-DQ_n) = B^n r.
+\end{equation}
+So $R_n$ is the ordinary remainder scaled by $B^n$.
+
+\subsection{Residual recurrence}
+\label{ssec:division:residual_recurrence}
+
+Starting from the definition of $R_{j+1}$ and substituting the quotient update
+\cref{eq:division:quotient_recurrence},
+\begin{align}
+  R_{j+1}
+  &= B^{j+1}(N-DQ_{j+1}) \nonumber \\
+  &= B^{j+1}\left(N-D\left(Q_j + q_{j+1}B^{-(j+1)}\right)\right) \nonumber \\
+  &= B^{j+1}(N-DQ_j) - q_{j+1}D \nonumber \\
+  &= BR_j - q_{j+1}D.
+  \label{eq:division:residual_recurrence}
+\end{align}
+This is the standard digit-recurrence equation for division.
+Every iteration chooses $q_{j+1}$ and then updates the residual with one multiply-by-radix and one
+subtract/add of a divisor multiple.
+
+\subsection{Ideal digit-selection intervals}
+\label{ssec:division:ideal_intervals}
+
+\subsubsection{Positive divisor}
+\label{sssec:division:positive_divisor}
+
+When $D \in [1/2,1)$, the containment condition \cref{eq:division:containment} becomes
+\begin{equation}
+  \label{eq:division:containment_pos}
+  -\rho D \le R_{j+1} \le \rho D.
+\end{equation}
+Substituting the recurrence \cref{eq:division:residual_recurrence} yields
+\begin{equation}
+  \label{eq:division:selection_sub_pos}
+  -\rho D \le BR_j - q_{j+1}D \le \rho D.
+\end{equation}
+Now add $q_{j+1}D$ to all three parts:
+\begin{align}
+  (q_{j+1}-\rho)D
+  &\le BR_j \le (q_{j+1}+\rho)D.
+  \label{eq:division:selection_interval_pos}
+\end{align}
+So, for a fixed divisor $D$, digit $q_{j+1}$ is valid precisely when
+\[
+  BR_j \in \bigl[(q_{j+1}-\rho)D,\; (q_{j+1}+\rho)D\bigr].
+\]
+Because $\rho > 1/2$, neighboring intervals overlap.
+Indeed, the upper end of digit $k-1$ equals $(k-1+\rho)D$, while the lower end of digit $k$ equals
+$(k-\rho)D$, and
+\[
+  (k-1+\rho)D - (k-\rho)D = (2\rho-1)D > 0.
+\]
+That overlap is the slack the practical quotient selector will later consume.
+
+\subsubsection{Negative divisor}
+\label{sssec:division:negative_divisor}
+
+When $D \in [-1,-1/2)$, we have $|D| = -D$, so containment becomes
+\begin{equation}
+  \label{eq:division:containment_neg}
+  \rho D \le R_{j+1} \le -\rho D.
+\end{equation}
+Substituting the recurrence gives
+\begin{equation}
+  \label{eq:division:selection_sub_neg}
+  \rho D \le BR_j - q_{j+1}D \le -\rho D.
+\end{equation}
+Adding $q_{j+1}D$ to all three terms gives
+\begin{equation}
+  \label{eq:division:selection_interval_neg}
+  (q_{j+1}+\rho)D \le BR_j \le (q_{j+1}-\rho)D.
+\end{equation}
+The interval endpoints appear ``reversed'' only because $D<0$.
+Equivalently, digit $q_{j+1}$ is valid when
+\[
+  BR_j \in \bigl[(q_{j+1}+\rho)D,\; (q_{j+1}-\rho)D\bigr].
+\]
+The same overlap calculation still works because multiplying by a negative $D$ swaps the ordering
+but not the existence of overlap.
+
+\subsection{Initialization}
+\label{ssec:division:init}
+
+The tutorial normalization makes the startup step unusually clean.
+For positive divisors,
+\begin{equation}
+  \label{eq:division:true_quotient_range}
+  0 < \frac{N}{D} < \frac{1}{2}.
+\end{equation}
+Hence it is natural to start from
+\begin{equation}
+  \label{eq:division:q0}
+  Q_0 = 0.
+\end{equation}
+The first update is
+\begin{equation}
+  \label{eq:division:q1_def}
+  Q_1 = Q_0 + q_1 B^{-1} = q_1 B^{-1}.
+\end{equation}
+The general error bound \cref{eq:division:error_bound_simple} with $j=0$ gives
+\begin{equation}
+  \label{eq:division:init_error_bound}
+  \left|\frac{N}{D} - Q_1\right| \le \rho B^{-1}.
+\end{equation}
+Expanding the absolute value,
+\begin{equation}
+  \label{eq:division:init_interval}
+  Q_1 - \rho B^{-1} \le \frac{N}{D} \le Q_1 + \rho B^{-1}.
+\end{equation}
+Since $Q_1 = q_1 B^{-1}$, digit $q_1$ covers the interval
+\begin{equation}
+  \label{eq:division:init_interval_q1}
+  \left(q_1 - \rho\right)B^{-1} \le \frac{N}{D} \le \left(q_1 + \rho\right)B^{-1}.
+\end{equation}
+Because the true quotient lies in $(0,1/2)$, we may restrict the first digit to the nonnegative half
+of the digit set:
+\[
+  q_1 \in \{0,1,\dotsc,a\}.
+\]
+That is exactly why the chosen normalization is convenient.
+
+It is easy to verify coverage of $(0,1/2)$.
+The leftmost possible first-step interval is obtained from $q_1=0$:
+\[
+  -\rho B^{-1} \le \frac{N}{D} \le \rho B^{-1}.
+\]
+The rightmost interval is obtained from $q_1=a$:
+\[
+  (a-\rho)B^{-1} \le \frac{N}{D} \le (a+\rho)B^{-1}.
+\]
+Since $a = \rho(B-1)$, the right endpoint becomes
+\[
+  (a+\rho)B^{-1} = \rho.
+\]
+Because $\rho > 1/2$, the right edge reaches beyond $1/2$, and the first digit always exists.
+
+For negative divisors, the same startup argument may be applied to $|D|$ and then reflected through
+the signed-digit tables of \cref{sssec:division:radix2_neg,sssec:division:radix4_neg}.
+Equivalently, one may view the negative-divisor case as the positive-divisor case followed by a
+quotient-sign reflection in the selected digits.
+
+For the two radices used later, the startup intervals are especially simple.
+
+\paragraph{Radix-2.}
+Here $B=2$, $a=1$, and $\rho=1$.
+Thus
+\begin{align*}
+  q_1 = 0 &\Longrightarrow -\frac{1}{2} \le \frac{N}{D} \le \frac{1}{2}, \\
+  q_1 = 1 &\Longrightarrow 0 \le \frac{N}{D} \le 1.
+\end{align*}
+Multiplying by a positive divisor gives
+\begin{align*}
+  q_1 = 0 &\Longrightarrow -\frac{1}{2}D \le N \le \frac{1}{2}D, \\
+  q_1 = 1 &\Longrightarrow 0 \le N \le D.
+\end{align*}
+
+\paragraph{Radix-4.}
+Here $B=4$, $a=2$, and $\rho=2/3$.
+Thus
+\begin{align*}
+  q_1 = 0 &\Longrightarrow -\frac{1}{6} \le \frac{N}{D} \le \frac{1}{6}, \\
+  q_1 = 1 &\Longrightarrow \frac{1}{12} \le \frac{N}{D} \le \frac{5}{12}, \\
+  q_1 = 2 &\Longrightarrow \frac{1}{3} \le \frac{N}{D} \le \frac{2}{3}.
+\end{align*}
+Multiplying by a positive divisor gives
+\begin{align*}
+  q_1 = 0 &\Longrightarrow -\frac{1}{6}D \le N \le \frac{1}{6}D, \\
+  q_1 = 1 &\Longrightarrow \frac{1}{12}D \le N \le \frac{5}{12}D, \\
+  q_1 = 2 &\Longrightarrow \frac{1}{3}D \le N \le \frac{2}{3}D.
+\end{align*}
+
+\subsection{From exact intervals to a practical quotient selector}
+\label{ssec:division:practical_selector}
+
+The intervals in \cref{ssec:division:ideal_intervals} are exact: they are written in terms of the
+true values of $BR_j$ and $D$.
+A hardware implementation rarely has those values available in that form.
+Instead, the residual is typically kept in carry-save format, and the selector sees only a short
+carry-propagated prefix together with a truncated view of the divisor.
+This subsection introduces the generic truncation model that will be instantiated in the radix-2
+and radix-4 examples.
+
+Assume that the shifted residual $BR_j$ is represented as the sum of a carry-save pair,
+\begin{equation}
+  \label{eq:division:cs_generic}
+  BR_j = Y_j + Z_j,
+\end{equation}
+where $Y_j$ and $Z_j$ are fixed-point words.
+A short \CPA\ adds only the first $\alpha$ fractional bits and produces a truncated value $t_j$.
+The truncation is one-sided: discarding the low-order tail makes the retained prefix no larger than
+the exact carry-propagated value.
+Therefore we can write
+\begin{equation}
+  \label{eq:division:trunc_error_generic}
+  0 \le BR_j - t_j < 2^{-(\alpha-1)}.
+\end{equation}
+Similarly, if the selector keeps only the first $\beta$ fractional bits of the divisor, then the
+truncated divisor index $\delta$ satisfies
+\begin{equation}
+  \label{eq:division:divisor_trunc_generic}
+  \delta \le 2^{\beta}D < \delta + 1.
+\end{equation}
+
+The selector must still be correct for every exact pair $(BR_j,D)$ consistent with the indices
+$(t_j,\delta)$.
+Consider the boundary between two adjacent digits $k-1$ and $k$ for a positive divisor.
+From \cref{eq:division:selection_interval_pos}, the upper exact boundary of digit $k-1$ is
+\[
+  U_{k-1}(D) = (k-1+\rho)D,
+\]
+and the lower exact boundary of digit $k$ is
+\[
+  L_k(D) = (k-\rho)D.
+\]
+After truncation, a sufficient condition for the two selector regions still to overlap is
+\begin{equation}
+  \label{eq:division:continuity_condition}
+  \min\bigl(U_{k-1,\text{trunc}}\bigr) \ge \max\bigl(L_{k,\text{trunc}}\bigr).
+\end{equation}
+The minimum of the upper boundary uses the smallest divisor value in the truncated bin and subtracts
+one full residual-truncation error:
+\begin{equation}
+  \label{eq:division:continuity_upper_generic}
+  \min\bigl(U_{k-1,\text{trunc}}\bigr) = (k-1+\rho)\,2^{-\beta}\delta - 2^{-(\alpha-1)},
+\end{equation}
+provided the coefficient of $D$ is positive.
+Likewise,
+\begin{equation}
+  \label{eq:division:continuity_lower_generic}
+  \max\bigl(L_{k,\text{trunc}}\bigr) = (k-\rho)\,2^{-\beta}(\delta+1),
+\end{equation}
+again for a positive coefficient of $D$.
+If the coefficient of $D$ is negative, the roles of $\delta$ and $\delta+1$ swap because increasing
+$D$ moves the boundary in the opposite direction.
+
+The selector-design problem now separates into two concrete tasks:
+\begin{enumerate}
+  \item choose enough residual precision (the parameter $\alpha$) and enough divisor/root precision
+        (the parameter $\beta$), and
+  \item once those precisions are fixed, map the integerized state variables into digit regions.
+\end{enumerate}
+The worked examples below carry out both steps explicitly.
+
+\subsection{Worked example: radix-2 division}
+\label{ssec:division:radix2}
+
+For radix 2 we choose the maximally redundant digit set
+\[
+  q_{j+1} \in \{-1,0,1\},
+\]
+so $a=1$ and therefore
+\begin{equation}
+  \label{eq:division:radix2_rho}
+  \rho = \frac{a}{B-1} = \frac{1}{2-1} = 1.
+\end{equation}
+
+\subsubsection{Positive divisor}
+\label{sssec:division:radix2_pos}
+
+Substituting $B=2$ and $\rho=1$ into \cref{eq:division:selection_interval_pos} gives the exact
+validity intervals
+\begin{equation}
+  \label{eq:division:radix2_intervals_pos}
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 0 \le 2R_j \le 2D, \\
+    0  & \text{if } -D \le 2R_j \le D, \\
+    -1 & \text{if } -2D \le 2R_j \le 0.
+  \end{cases}
+\end{equation}
+Because the digit set is redundant, these intervals overlap:
+\[
+  q_{j+1}=1 \text{ and } q_{j+1}=0 \text{ are both valid when } 0 \le 2R_j \le D,
+\]
+and similarly
+\[
+  q_{j+1}=0 \text{ and } q_{j+1}=-1 \text{ are both valid when } -D \le 2R_j \le 0.
+\]
+
+Let the truncated residual satisfy
+\begin{equation}
+  \label{eq:division:radix2_trunc_error}
+  0 \le 2R_j - t_j < 2^{-(\alpha-1)}.
+\end{equation}
+Define the integer selector variables
+\begin{align}
+  \label{eq:division:radix2_tau_def}
+  \tau_j &= \Int\bigl(2^{\alpha} t_j\bigr),
+  &
+  \tau_j &\le 2^{\alpha+1}R_j < \tau_j + 2, \\
+  \label{eq:division:radix2_delta_def}
+  \delta &= \Int\bigl(2^{\beta}D_{\text{trunc}}\bigr),
+  &
+  \delta &\le 2^{\beta}D < \delta+1.
+\end{align}
+Since $D \in [1/2,1)$, the divisor index ranges over
+\begin{equation}
+  \label{eq:division:radix2_delta_range}
+  \delta \in \{2^{\beta-1},2^{\beta-1}+1,\dotsc,2^{\beta}-2,2^{\beta}-1\}.
+\end{equation}
+
+We now derive the continuity condition explicitly.
+There are only two neighboring boundaries to check.
+
+\paragraph{Boundary between $q=1$ and $q=0$.}
+Here
+\[
+  U_0(D) = (0+\rho)D = D,
+  \qquad
+  L_1(D) = (1-\rho)D = 0.
+\]
+Using \cref{eq:division:continuity_upper_generic,eq:division:continuity_lower_generic},
+\begin{align}
+  \min\bigl(U_{0,\text{trunc}}\bigr)
+  &= 2^{-\beta}\delta - 2^{-(\alpha-1)}, \nonumber \\
+  \max\bigl(L_{1,\text{trunc}}\bigr)
+  &= 0.
+  \label{eq:division:radix2_cont_q1q0}
+\end{align}
+Therefore the overlap survives truncation if
+\begin{equation}
+  \label{eq:division:radix2_cont_q1q0_final}
+  2^{-\beta}\delta - 2^{-(\alpha-1)} \ge 0.
+\end{equation}
+
+\paragraph{Boundary between $q=0$ and $q=-1$.}
+Here
+\[
+  U_{-1}(D) = (-1+\rho)D = 0,
+  \qquad
+  L_0(D) = (0-\rho)D = -D.
+\]
+Because the coefficient of $D$ in $L_0$ is negative, its maximum over the divisor bin uses the
+smallest divisor in the bin:
+\begin{align}
+  \min\bigl(U_{-1,\text{trunc}}\bigr)
+  &= 0 - 2^{-(\alpha-1)}, \nonumber \\
+  \max\bigl(L_{0,\text{trunc}}\bigr)
+  &= -2^{-\beta}\delta.
+  \label{eq:division:radix2_cont_q0qm1}
+\end{align}
+So the continuity condition becomes
+\begin{equation}
+  \label{eq:division:radix2_cont_q0qm1_final}
+  -2^{-(\alpha-1)} \ge -2^{-\beta}\delta,
+\end{equation}
+which is equivalent to
+\begin{equation}
+  \label{eq:division:radix2_cont_q0qm1_simplified}
+  2^{-\beta}\delta \ge 2^{-(\alpha-1)}.
+\end{equation}
+
+Both boundaries therefore impose the same requirement.
+The worst case is the smallest possible divisor index,
+\[
+  \delta_{\min} = 2^{\beta-1}.
+\]
+Substituting it into \cref{eq:division:radix2_cont_q1q0_final} (or equivalently
+\cref{eq:division:radix2_cont_q0qm1_simplified}) gives
+\begin{align}
+  2^{-\beta}2^{\beta-1} &\ge 2^{-(\alpha-1)} \nonumber \\
+  2^{-1} &\ge 2^{-(\alpha-1)} \nonumber \\
+  \alpha &\ge 2.
+  \label{eq:division:radix2_alpha_ge_2}
+\end{align}
+The smallest useful choice is therefore
+\begin{equation}
+  \label{eq:division:radix2_alpha_beta_choice}
+  \alpha = 2,
+  \qquad
+  \beta = 2.
+\end{equation}
+With these values,
+\begin{align}
+  \label{eq:division:radix2_tau_val}
+  \tau_j &= \Int\bigl(4t_j\bigr) \in \{-16,\dotsc,15\},
+  &
+  \tau_j &\le 8R_j < \tau_j+2, \\
+  \label{eq:division:radix2_delta_val}
+  \delta &= \Int\bigl(4D_{\text{trunc}}\bigr) \in \{2,3\},
+  &
+  \delta &\le 4D < \delta+1.
+\end{align}
+
+At this point several concrete selector tables are possible, because the overlapping boxes may be
+assigned to either neighbor.
+The following table matches the accompanying scripts and keeps the overlap explicit.
+It is obtained by converting the exact boundaries in
+\cref{eq:division:radix2_intervals_pos} into integer inequalities using
+\cref{eq:division:radix2_tau_val,eq:division:radix2_delta_val}.
+For example,
+\begin{align*}
+  q_{j+1}=1:
+  &\quad 0 \le 2R_j \le 2D \\
+  &\Longrightarrow 0 \le 8R_j \le 8D \\
+  &\Longrightarrow 0 \le \tau_j < 2(\delta+1),
+\end{align*}
+and similarly for the other digits.
+The resulting integer selector is
+\begin{equation}
+  \label{eq:division:radix2_logic_pos}
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 0 \le \tau_j < 2(\delta+1), \\
+    0  & \text{if } -\delta \le \tau_j \le \delta-2, \\
+    -1 & \text{if } -2(\delta+1)-2 < \tau_j \le -2.
+  \end{cases}
+\end{equation}
+The inequalities are intentionally not disjoint; the shared points are the selector overlap.
+
+\subsubsection{Negative divisor}
+\label{sssec:division:radix2_neg}
+
+For $D \in [-1,-1/2)$, \cref{eq:division:selection_interval_neg} becomes
+\begin{equation}
+  \label{eq:division:radix2_intervals_neg}
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 2D \le 2R_j \le 0, \\
+    0  & \text{if } D \le 2R_j \le -D, \\
+    -1 & \text{if } 0 \le 2R_j \le -2D.
+  \end{cases}
+\end{equation}
+The same truncation depth $\alpha=2$ is sufficient.
+Now the divisor index is taken from the signed prefix of the negative divisor:
+\begin{equation}
+  \label{eq:division:radix2_delta_val_neg}
+  \delta = \Int\bigl(4D_{\text{trunc}}\bigr) \in \{-4,-3\},
+  \qquad
+  \delta \le 4D < \delta+1.
+\end{equation}
+Using the same integer residual index $\tau_j$, a convenient signed selector table is
+\begin{equation}
+  \label{eq:division:radix2_logic_neg}
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 2\delta-2 < \tau_j \le -2, \\
+    0  & \text{if } \delta+1 \le \tau_j \le -(\delta+1)-2, \\
+    -1 & \text{if } 0 \le \tau_j \le -2\delta.
+  \end{cases}
+\end{equation}
+Again, the endpoints deliberately preserve overlap between neighboring digits.
+
+\subsection{Worked example: radix-4 division}
+\label{ssec:division:radix4}
+
+For radix 4 we use the minimally redundant digit set
+\[
+  q_{j+1} \in \{-2,-1,0,1,2\}.
+\]
+Now $a=2$, so
+\begin{equation}
+  \label{eq:division:radix4_rho}
+  \rho = \frac{2}{4-1} = \frac{2}{3}.
+\end{equation}
+
+\subsubsection{Positive divisor}
+\label{sssec:division:radix4_pos}
+
+Substituting $B=4$ and $\rho=2/3$ into \cref{eq:division:selection_interval_pos} yields
+\begin{equation}
+  \label{eq:division:radix4_intervals_pos}
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{4}{3}D \le 4R_j \le \frac{8}{3}D, \\
+    1  & \text{if } \frac{1}{3}D \le 4R_j \le \frac{5}{3}D, \\
+    0  & \text{if } -\frac{2}{3}D \le 4R_j \le \frac{2}{3}D, \\
+    -1 & \text{if } -\frac{5}{3}D \le 4R_j \le -\frac{1}{3}D, \\
+    -2 & \text{if } -\frac{8}{3}D \le 4R_j \le -\frac{4}{3}D.
+  \end{cases}
+\end{equation}
+The exact overlap between adjacent digits now has width
+\[
+  (2\rho-1)D = \frac{1}{3}D,
+\]
+which is narrower than in the radix-2 case and therefore forces a more precise selector.
+
+Let the truncated residual satisfy
+\begin{equation}
+  \label{eq:division:radix4_trunc_error}
+  0 \le 4R_j - t_j < 2^{-(\alpha-1)}.
+\end{equation}
+Define the integer selector variables
+\begin{align}
+  \label{eq:division:radix4_tau_def}
+  \tau_j &= \Int\bigl(2^{\alpha}t_j\bigr),
+  &
+  \tau_j &\le 2^{\alpha+2}R_j < \tau_j+2, \\
+  \label{eq:division:radix4_delta_def}
+  \delta &= \Int\bigl(2^{\beta}D_{\text{trunc}}\bigr),
+  &
+  \delta &\le 2^{\beta}D < \delta+1.
+\end{align}
+The continuity boundary between digits $k-1$ and $k$ is still
+\[
+  \min\bigl(U_{k-1,\text{trunc}}\bigr) \ge \max\bigl(L_{k,\text{trunc}}\bigr),
+\]
+but now there are four adjacent boundaries to check: $(2,1)$, $(1,0)$, $(0,-1)$, and $(-1,-2)$.
+Writing them out one at a time gives
+\begin{align}
+  \text{boundary }(2,1):
+  &\quad
+  \left(1+\frac{2}{3}\right)2^{-\beta}\delta - 2^{-(\alpha-1)}
+  \ge
+  \left(2-\frac{2}{3}\right)2^{-\beta}(\delta+1),
+  \nonumber \\
+  &\quad
+  \frac{1}{3}2^{-\beta}\delta - \frac{4}{3}2^{-\beta} - 2^{-(\alpha-1)} \ge 0,
+  \label{eq:division:radix4_cont_21} \\
+  \text{boundary }(1,0):
+  &\quad
+  \left(0+\frac{2}{3}\right)2^{-\beta}\delta - 2^{-(\alpha-1)}
+  \ge
+  \left(1-\frac{2}{3}\right)2^{-\beta}(\delta+1),
+  \nonumber \\
+  &\quad
+  \frac{1}{3}2^{-\beta}\delta - \frac{1}{3}2^{-\beta} - 2^{-(\alpha-1)} \ge 0,
+  \label{eq:division:radix4_cont_10} \\
+  \text{boundary }(0,-1):
+  &\quad
+  \left(-1+\frac{2}{3}\right)2^{-\beta}(\delta+1) - 2^{-(\alpha-1)}
+  \ge
+  \left(0-\frac{2}{3}\right)2^{-\beta}\delta,
+  \nonumber \\
+  &\quad
+  \frac{1}{3}2^{-\beta}\delta - \frac{1}{3}2^{-\beta} - 2^{-(\alpha-1)} \ge 0,
+  \label{eq:division:radix4_cont_0m1} \\
+  \text{boundary }(-1,-2):
+  &\quad
+  \left(-2+\frac{2}{3}\right)2^{-\beta}(\delta+1) - 2^{-(\alpha-1)}
+  \ge
+  \left(-1-\frac{2}{3}\right)2^{-\beta}\delta,
+  \nonumber \\
+  &\quad
+  \frac{1}{3}2^{-\beta}\delta - \frac{4}{3}2^{-\beta} - 2^{-(\alpha-1)} \ge 0.
+  \label{eq:division:radix4_cont_m1m2}
+\end{align}
+So only two distinct inequalities remain:
+\cref{eq:division:radix4_cont_21,eq:division:radix4_cont_m1m2} and
+\cref{eq:division:radix4_cont_10,eq:division:radix4_cont_0m1}.
+The outer boundaries are more restrictive because they subtract an extra $2^{-\beta}$ term.
+
+A standard choice is
+\begin{equation}
+  \label{eq:division:radix4_alpha_beta_choice}
+  \alpha = 5,
+  \qquad
+  \beta = 4.
+\end{equation}
+Then
+\begin{align}
+  \label{eq:division:radix4_tau_val}
+  \tau_j &= \Int\bigl(32t_j\bigr) \in \{-128,\dotsc,127\},
+  &
+  \tau_j &\le 128R_j < \tau_j+2, \\
+  \label{eq:division:radix4_delta_val}
+  \delta &= \Int\bigl(16D_{\text{trunc}}\bigr) \in \{8,9,\dotsc,15\},
+  &
+  \delta &\le 16D < \delta+1.
+\end{align}
+As in the radix-2 case, many equivalent tables can be formed once continuity is guaranteed.
+The following one matches the accompanying scripts and keeps the overlap explicit:
+\begin{equation}
+  \label{eq:division:radix4_logic_pos}
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{8}{3}(\delta+1) \le \tau_j < \frac{16}{3}(\delta+1), \\
+    1  & \text{if } \frac{2}{3}(\delta+1) \le \tau_j \le \frac{10}{3}\delta - 2, \\
+    0  & \text{if } -\frac{4}{3}\delta \le \tau_j \le \frac{4}{3}\delta - 2, \\
+    -1 & \text{if } -\frac{10}{3}\delta \le \tau_j \le -\frac{2}{3}(\delta+1) - 2, \\
+    -2 & \text{if } -\frac{16}{3}(\delta+1) - 2 < \tau_j \le -\frac{8}{3}(\delta+1) - 2.
+  \end{cases}
+\end{equation}
+
+\subsubsection{Negative divisor}
+\label{sssec:division:radix4_neg}
+
+For $D \in [-1,-1/2)$, \cref{eq:division:selection_interval_neg} gives
+\begin{equation}
+  \label{eq:division:radix4_intervals_neg}
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{8}{3}D \le 4R_j \le \frac{4}{3}D, \\
+    1  & \text{if } \frac{5}{3}D \le 4R_j \le \frac{1}{3}D, \\
+    0  & \text{if } \frac{2}{3}D \le 4R_j \le -\frac{2}{3}D, \\
+    -1 & \text{if } -\frac{1}{3}D \le 4R_j \le -\frac{5}{3}D, \\
+    -2 & \text{if } -\frac{4}{3}D \le 4R_j \le -\frac{8}{3}D.
+  \end{cases}
+\end{equation}
+The same precision pair $(\alpha,\beta)=(5,4)$ is sufficient.
+The signed divisor index is now
+\begin{equation}
+  \label{eq:division:radix4_delta_val_neg}
+  \delta = \Int\bigl(16D_{\text{trunc}}\bigr) \in \{-16,-15,\dotsc,-9\},
+  \qquad
+  \delta \le 16D < \delta+1.
+\end{equation}
+A matching signed selector table is
+\begin{equation}
+  \label{eq:division:radix4_logic_neg}
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{16}{3}\delta - 2 < \tau_j \le \frac{8}{3}\delta - 2, \\
+    1  & \text{if } \frac{10}{3}(\delta+1) \le \tau_j \le \frac{2}{3}\delta - 2, \\
+    0  & \text{if } \frac{4}{3}(\delta+1) \le \tau_j \le -\frac{4}{3}(\delta+1) - 2, \\
+    -1 & \text{if } -\frac{2}{3}\delta \le \tau_j \le -\frac{10}{3}(\delta+1) - 2, \\
+    -2 & \text{if } -\frac{8}{3}\delta \le \tau_j \le -\frac{16}{3}\delta.
+  \end{cases}
+\end{equation}
+
+\subsection{Selector plots}
+\label{ssec:division:figures}
+
+\Cref{fig:division:qds} visualizes the quotient-digit regions produced by the basic and optimized
+selectors.
+The basic plots leave overlap explicit; the optimized plot shows one deterministic way to assign the
+overlap boxes without changing correctness.
+The optimization itself is described later in \cref{sec:optimized_overlap}.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[
+      width=\textwidth,
+      height=3.5\textwidth,
+      keepaspectratio=true
+    ]{../figures/division/radix2_qds_basic_quadrants_1_2_3_4.pdf}
+    \caption{Radix-2 basic \QDS}
+    \label{fig:division:radix2_basic}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[
+      width=\textwidth,
+      height=3.5\textwidth,
+      keepaspectratio=true
+    ]{../figures/division/radix4_qds_basic_quadrants_1_2_3_4.pdf}
+    \caption{Radix-4 basic \QDS}
+    \label{fig:division:radix4_basic}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[
+      width=\textwidth,
+      height=3.5\textwidth,
+      keepaspectratio=true
+    ]{../figures/division/radix4_qds_optimized_quadrants_1_2_3_4.pdf}
+    \caption{Radix-4 optimized \QDS}
+    \label{fig:division:radix4_optimized}
+  \end{subfigure}
+  \caption{Quotient-digit selection regions. The horizontal axis is the truncated divisor index
+  $\delta$, and the vertical axis is the truncated residual index $\tau_j$.}
+  \label{fig:division:qds}
+\end{figure}
+
+\clearpage
+
+\section{Square Root by Digit Recurrence}
+\label{sec:sqrt}
+
+Square root follows the same overall plan as division, but the digit-selection bounds depend on the
+current partial root as well as on the residual.
+That dependence is what makes square-root selectors slightly more intricate.
+We begin from the exact relation
+\begin{equation}
+  \label{eq:sqrt:relation}
+  X = S_n^2 + r,
+\end{equation}
+where $X$ is the radicand, $S_n$ the final root, and $r$ the final \emph{unscaled} remainder.
+
+\subsection{Root expansion}
+\label{ssec:sqrt:root_expansion}
+
+Let $S_j$ denote the partial root after $j$ selected digits.
+The next digit update is
+\begin{equation}
+  \label{eq:sqrt:root_recurrence}
+  S_{j+1} = S_j + s_{j+1}B^{-(j+1)}.
+\end{equation}
+Repeated substitution gives
+\begin{equation}
+  \label{eq:sqrt:root_unfolded}
+  S_{j+1} = S_0 + \sum_{i=0}^{j} s_{i+1}B^{-(i+1)},
+\end{equation}
+and therefore
+\begin{equation}
+  \label{eq:sqrt:root_final}
+  S_n = S_0 + \sum_{i=0}^{n-1} s_{i+1}B^{-(i+1)}.
+\end{equation}
+
+\subsection{Approximation error and containment}
+\label{ssec:sqrt:error_and_containment}
+
+Define the root error
+\begin{equation}
+  \label{eq:sqrt:error_def}
+  \varepsilon_{j+1} = \sqrt{X} - S_{j+1}.
+\end{equation}
+As in division, the tail of the digit series bounds this error:
+\begin{equation}
+  \label{eq:sqrt:error_tail}
+  \varepsilon_{j+1} = \sum_{i=j+1}^{\infty} s_{i+1}B^{-(i+1)}.
+\end{equation}
+Since $|s_{i+1}|\le a$,
+\begin{align}
+  \left|\varepsilon_{j+1}\right|
+  &= \left|\sum_{i=j+1}^{\infty} s_{i+1}B^{-(i+1)}\right| \nonumber \\
+  &\le \sum_{i=j+1}^{\infty} a B^{-(i+1)} \nonumber \\
+  &= a B^{-(j+2)} \sum_{k=0}^{\infty} B^{-k} \nonumber \\
+  &= a B^{-(j+2)} \cdot \frac{1}{1-B^{-1}} \nonumber \\
+  &= \frac{a}{B-1} B^{-(j+1)} \nonumber \\
+  &= \rho B^{-(j+1)}.
+  \label{eq:sqrt:error_bound}
+\end{align}
+So
+\begin{equation}
+  \label{eq:sqrt:error_bound_simple}
+  \left|\sqrt{X} - S_{j+1}\right| \le \rho B^{-(j+1)}.
+\end{equation}
+Expanding the absolute-value inequality gives
+\begin{equation}
+  \label{eq:sqrt:error_interval}
+  S_{j+1} - \rho B^{-(j+1)} \le \sqrt{X} \le S_{j+1} + \rho B^{-(j+1)}.
+\end{equation}
+Now square all three terms:
+\begin{align}
+  \left(S_{j+1}-\rho B^{-(j+1)}\right)^2
+  &\le X \le
+  \left(S_{j+1}+\rho B^{-(j+1)}\right)^2 \nonumber \\
+  S_{j+1}^2 - 2\rho S_{j+1}B^{-(j+1)} + \rho^2B^{-2(j+1)}
+  &\le X \le
+  S_{j+1}^2 + 2\rho S_{j+1}B^{-(j+1)} + \rho^2B^{-2(j+1)}.
+  \label{eq:sqrt:squared_error_interval}
+\end{align}
+Subtract $S_{j+1}^2$ from all three parts:
+\begin{equation}
+  \label{eq:sqrt:x_minus_s_sq}
+  \rho^2B^{-2(j+1)} - 2\rho S_{j+1}B^{-(j+1)}
+  \le X-S_{j+1}^2 \le
+  \rho^2B^{-2(j+1)} + 2\rho S_{j+1}B^{-(j+1)}.
+\end{equation}
+Define the scaled residual
+\begin{equation}
+  \label{eq:sqrt:residual_def}
+  R_{j+1} = B^{j+1}(X-S_{j+1}^2).
+\end{equation}
+Multiplying \cref{eq:sqrt:x_minus_s_sq} by $B^{j+1}$ gives the containment condition
+\begin{equation}
+  \label{eq:sqrt:containment}
+  \rho^2B^{-(j+1)} - 2\rho S_{j+1}
+  \le R_{j+1} \le
+  \rho^2B^{-(j+1)} + 2\rho S_{j+1}.
+\end{equation}
+At the last step,
+\begin{equation}
+  \label{eq:sqrt:final_remainder}
+  R_n = B^n(X-S_n^2) = B^n r.
+\end{equation}
+
+\subsection{Residual recurrence}
+\label{ssec:sqrt:residual_recurrence}
+
+Starting from \cref{eq:sqrt:residual_def} and substituting the update
+\cref{eq:sqrt:root_recurrence},
+\begin{align}
+  R_{j+1}
+  &= B^{j+1}(X-S_{j+1}^2) \nonumber \\
+  &= B^{j+1}\left(X-\left(S_j+s_{j+1}B^{-(j+1)}\right)^2\right) \nonumber \\
+  &= B^{j+1}(X-S_j^2) - 2S_js_{j+1} - s_{j+1}^2B^{-(j+1)} \nonumber \\
+  &= BR_j - s_{j+1}\left(2S_j+s_{j+1}B^{-(j+1)}\right).
+  \label{eq:sqrt:residual_recurrence}
+\end{align}
+Compared with division, the update now involves the current partial root $S_j$ and the square of the
+new digit.
+That dependence is the source of the additional selector complexity.
+
+\subsection{Ideal digit-selection intervals}
+\label{ssec:sqrt:ideal_intervals}
+
+Substitute \cref{eq:sqrt:residual_recurrence} into the containment inequality
+\cref{eq:sqrt:containment}:
+\begin{align}
+  \rho^2B^{-(j+1)} - 2\rho S_{j+1}
+  &\le BR_j - s_{j+1}\left(2S_j+s_{j+1}B^{-(j+1)}\right) \nonumber \\
+  &\le \rho^2B^{-(j+1)} + 2\rho S_{j+1}.
+  \label{eq:sqrt:selection_sub1}
+\end{align}
+Next replace $S_{j+1}$ by $S_j+s_{j+1}B^{-(j+1)}$:
+\begin{align}
+  \rho^2B^{-(j+1)} - 2\rho\left(S_j+s_{j+1}B^{-(j+1)}\right)
+  &\le BR_j - s_{j+1}\left(2S_j+s_{j+1}B^{-(j+1)}\right) \nonumber \\
+  &\le \rho^2B^{-(j+1)} + 2\rho\left(S_j+s_{j+1}B^{-(j+1)}\right).
+  \label{eq:sqrt:selection_sub2}
+\end{align}
+Now move the digit-dependent term on the right-hand side of the residual recurrence to the outside.
+For the left inequality,
+\begin{align*}
+  BR_j
+  &\ge s_{j+1}\left(2S_j+s_{j+1}B^{-(j+1)}\right)
+     + \rho^2B^{-(j+1)} - 2\rho\left(S_j+s_{j+1}B^{-(j+1)}\right) \\
+  &= 2(s_{j+1}-\rho)S_j + \left(s_{j+1}^2 - 2\rho s_{j+1} + \rho^2\right)B^{-(j+1)} \\
+  &= 2(s_{j+1}-\rho)S_j + (s_{j+1}-\rho)^2B^{-(j+1)}.
+\end{align*}
+Similarly, for the right inequality,
+\begin{align*}
+  BR_j
+  &\le s_{j+1}\left(2S_j+s_{j+1}B^{-(j+1)}\right)
+     + \rho^2B^{-(j+1)} + 2\rho\left(S_j+s_{j+1}B^{-(j+1)}\right) \\
+  &= 2(s_{j+1}+\rho)S_j + (s_{j+1}+\rho)^2B^{-(j+1)}.
+\end{align*}
+Therefore the exact selector interval is
+\begin{equation}
+  \label{eq:sqrt:selection_interval}
+  2(s_{j+1}-\rho)S_j + (s_{j+1}-\rho)^2B^{-(j+1)}
+  \le BR_j \le
+  2(s_{j+1}+\rho)S_j + (s_{j+1}+\rho)^2B^{-(j+1)}.
+\end{equation}
+Unlike division, the bounds depend on $S_j$ itself and on an explicit $B^{-(j+1)}$ term.
+This is why the selector can be iteration-dependent during startup.
+
+\subsection{Initialization}
+\label{ssec:sqrt:init}
+
+With the tutorial normalization $X \in [1/4,1)$, the exact root satisfies
+\begin{equation}
+  \label{eq:sqrt:true_root_range}
+  \sqrt{X} \in \left[\frac{1}{2},1\right).
+\end{equation}
+That suggests a convenient starting point from above:
+\begin{equation}
+  \label{eq:sqrt:s0}
+  S_0 = 1.
+\end{equation}
+The first update is
+\begin{equation}
+  \label{eq:sqrt:s1_def}
+  S_1 = S_0 + s_1B^{-1} = 1 + s_1B^{-1}.
+\end{equation}
+Applying the general error bound \cref{eq:sqrt:error_bound_simple} with $j=0$ gives
+\begin{equation}
+  \label{eq:sqrt:init_error_bound}
+  \left|\sqrt{X}-S_1\right| \le \rho B^{-1},
+\end{equation}
+so
+\begin{equation}
+  \label{eq:sqrt:init_interval}
+  S_1 - \rho B^{-1} \le \sqrt{X} \le S_1 + \rho B^{-1}.
+\end{equation}
+Since $S_1 = 1 + s_1 B^{-1}$, digit $s_1$ covers the interval
+\begin{equation}
+  \label{eq:sqrt:init_interval_s1}
+  1 + \left(s_1 - \rho\right)B^{-1} \le \sqrt{X} \le 1 + \left(s_1 + \rho\right)B^{-1}.
+\end{equation}
+Because the true root lies in $[1/2,1)$, we may restrict the first digit to the nonpositive half of
+the digit set:
+\[
+  s_1 \in \{0,-1,\dotsc,-a\}.
+\]
+That is exactly why the chosen normalization is convenient.
+
+It is easy to verify coverage of $[1/2,1)$.
+The rightmost possible first-step interval is obtained from $s_1=0$:
+\[
+  1 - \rho B^{-1} \le \sqrt{X} \le 1 + \rho B^{-1}.
+\]
+The leftmost interval is obtained from $s_1=-a$:
+\[
+  1 - (a+\rho)B^{-1} \le \sqrt{X} \le 1 - (a-\rho)B^{-1}.
+\]
+Since $a = \rho(B-1)$, the left endpoint becomes
+\[
+  1 - (a+\rho)B^{-1} = 1 - \rho.
+\]
+Because $\rho > 1/2$, the left edge reaches below $1/2$, and the first digit always exists.
+
+For the two radices used later, the startup intervals are especially simple.
+
+\paragraph{Radix-2.}
+With $B=2$ and $\rho=1$,
+\begin{align*}
+  s_1=0 &\Longrightarrow \frac{1}{2} \le \sqrt{X} \le \frac{3}{2}, \\
+  s_1=-1 &\Longrightarrow 0 \le \sqrt{X} \le 1.
+\end{align*}
+Squaring yields
+\begin{align*}
+  s_1=0 &\Longrightarrow \frac{1}{4} \le X \le \frac{9}{4}, \\
+  s_1=-1 &\Longrightarrow 0 \le X \le 1.
+\end{align*}
+
+\paragraph{Radix-4.}
+With $B=4$ and $\rho=2/3$,
+\begin{align*}
+  s_1=0 &\Longrightarrow \frac{5}{6} \le \sqrt{X} \le \frac{7}{6}, \\
+  s_1=-1 &\Longrightarrow \frac{7}{12} \le \sqrt{X} \le \frac{11}{12}, \\
+  s_1=-2 &\Longrightarrow \frac{1}{3} \le \sqrt{X} \le \frac{2}{3}.
+\end{align*}
+Squaring yields
+\begin{align*}
+  s_1=0 &\Longrightarrow \frac{25}{36} \le X \le \frac{49}{36}, \\
+  s_1=-1 &\Longrightarrow \frac{49}{144} \le X \le \frac{121}{144}, \\
+  s_1=-2 &\Longrightarrow \frac{1}{9} \le X \le \frac{4}{9}.
+\end{align*}
+
+\subsection{From exact intervals to a practical root selector}
+\label{ssec:sqrt:practical_selector}
+
+The root selector again works with truncated quantities.
+In the square-root case, however, the additive $B^{-(j+1)}$ terms in
+\cref{eq:sqrt:selection_interval} are still large enough during the earliest iterations that the
+startup selector and the steady-state selector need not coincide.
+Let the retained residual prefix satisfy
+\begin{equation}
+  \label{eq:sqrt:trunc_error_generic}
+  0 \le BR_j - t_j < 2^{-(\alpha-1)}.
+\end{equation}
+The partial root must also be truncated.
+Write its truncated integer index as $\sigma_j$ so that
+\begin{equation}
+  \label{eq:sqrt:partial_root_trunc_generic}
+  \sigma_j \le 2^{\beta}S_j \le \sigma_j + 1 - 2^{\beta}\ulp,
+\end{equation}
+where the final term reminds us that $S_j$ itself is already quantized to the current root ulp.
+The generic selector-design task is therefore similar to the division case, except that the exact
+interval boundaries now depend on both $S_j$ and the iteration index $j$.
+In practice one checks the continuity condition at each adjacent digit boundary and, if the
+required overlap is not yet present in the earliest iterations, introduces special startup paths.
+The worked examples below show exactly how that happens.
+
+\subsection{Worked example: radix-2 square root}
+\label{ssec:sqrt:radix2}
+
+For radix 2 we use the digit set
+\[
+  s_{j+1} \in \{-1,0,1\},
+\]
+so again $a=1$ and $\rho=1$.
+Substituting these values into \cref{eq:sqrt:selection_interval} gives the exact selector intervals
+\begin{equation}
+  \label{eq:sqrt:radix2_intervals}
+  s_{j+1} =
+  \begin{cases}
+    1  & \text{if } 0 \le 2R_j \le 4S_j + 4\cdot 2^{-(j+1)}, \\
+    0  & \text{if } -2S_j + 2^{-(j+1)} \le 2R_j \le 2S_j + 2^{-(j+1)}, \\
+    -1 & \text{if } -4S_j + 4\cdot 2^{-(j+1)} \le 2R_j \le 0.
+  \end{cases}
+\end{equation}
+
+Now define the truncated integer variables
+\begin{align}
+  \label{eq:sqrt:radix2_tau_def}
+  \tau_j &= \Int\bigl(2^{\alpha}t_j\bigr),
+  &
+  \tau_j &\le 2^{\alpha+1}R_j < \tau_j+2, \\
+  \label{eq:sqrt:radix2_sigma_def}
+  \sigma_j &= \Int\bigl(2^{\beta}S_{j,\text{trunc}}\bigr),
+  &
+  \sigma_j &\le 2^{\beta}S_j \le \sigma_j + 1 - 2^{\beta}\ulp.
+\end{align}
+Since $S_j \in [1/2,1]$, the partial-root index ranges over
+\begin{equation}
+  \label{eq:sqrt:radix2_sigma_range}
+  \sigma_j \in \{2^{\beta-1},2^{\beta-1}+1,\dotsc,2^{\beta}-1,2^{\beta}\}.
+\end{equation}
+For the interior steady-state selector we choose
+\begin{equation}
+  \label{eq:sqrt:radix2_alpha_beta_choice}
+  \alpha = 1,
+  \qquad
+  \beta = 2.
+\end{equation}
+At this precision the full truncated-root range is $\sigma_j \in \{2,3,4\}$.
+The interior state is $\sigma_j=3$; the boundary values $\sigma_j=2$ and $\sigma_j=4$ correspond to
+startup paths near $X=1/4$ and $X=1$, and are treated separately below.
+Under that convention,
+\begin{align}
+  \label{eq:sqrt:radix2_tau_val}
+  \tau_j &= \Int\bigl(2t_j\bigr) \in \{-16,\dotsc,15\},
+  &
+  \tau_j &\le 4R_j < \tau_j+2, \\
+  \label{eq:sqrt:radix2_sigma_val}
+  \sigma_j &= \Int\bigl(4S_{j,\text{trunc}}\bigr) \in \{3\},
+  &
+  \sigma_j &\le 4S_j \le \sigma_j + 1 - 4\cdot 2^{-j}.
+\end{align}
+
+The continuity condition now contains explicit $j$-dependent terms.
+Writing the two adjacent boundaries explicitly produces
+\begin{align}
+  \text{boundary }(1,0):
+  &\quad
+  2\cdot 2^{-\beta}\sigma_j - 2^{-(\alpha-1)} \ge 0,
+  \label{eq:sqrt:radix2_cont_10} \\
+  \text{boundary }(0,-1):
+  &\quad
+  2\cdot 2^{-\beta}\sigma_j - 2^{-(\alpha-1)} - B^{-(j+1)} \ge 0.
+  \label{eq:sqrt:radix2_cont_0m1}
+\end{align}
+The last one is the most restrictive.
+Using $B=2$, $\alpha=1$, $\beta=2$, and the worst-case \emph{interior} partial-root index
+$\sigma_j=3$, it becomes
+\begin{align}
+  2\cdot 2^{-2}\cdot 3 - 2^{-0} - 2^{-(j+1)} &\ge 0 \nonumber \\
+  \frac{1}{2} - 2^{-(j+1)} &\ge 0.
+  \label{eq:sqrt:radix2_startup_restriction}
+\end{align}
+Thus the interior radix-2 selector is valid for every post-initialization iteration $j\ge 0$.
+The only remaining cases are the two boundary startup paths omitted from the interior state
+$\sigma_j=3$.
+
+For $j\ge 0$, a convenient integer selector table is
+\begin{equation}
+  \label{eq:sqrt:radix2_logic}
+  s_{j+1} =
+  \begin{cases}
+    1  & \text{if } 0 \le \tau_j < 2(\sigma_j+1), \\
+    0  & \text{if } -(\sigma_j-1) \le \tau_j \le \sigma_j - 2, \\
+    -1 & \text{if } -2(\sigma_j+1) - 2 < \tau_j \le -2.
+  \end{cases}
+\end{equation}
+
+\subsubsection{Startup path: radicand close to \texorpdfstring{$1/4$}{1/4}}
+\label{sssec:sqrt:radix2_near_quarter}
+
+When the radicand is near the low end of the normalized interval, initialization chooses
+\[
+  s_1 = -1.
+\]
+This is exactly the boundary case $\sigma_j=2$ that was excluded from the interior selector above.
+Suppose the following digits remain zero:
+\[
+  s_2 = s_3 = \dotsc = s_j = 0.
+\]
+Then
+\begin{equation}
+  \label{eq:sqrt:radix2_near_quarter_s1}
+  S_1 = S_0 + s_1 2^{-1} = 1 - \frac{1}{2} = \frac{1}{2},
+\end{equation}
+and hence
+\begin{equation}
+  \label{eq:sqrt:radix2_near_quarter_sj}
+  S_j = \frac{1}{2}, \qquad j\ge 1.
+\end{equation}
+Therefore
+\begin{equation}
+  \label{eq:sqrt:radix2_near_quarter_sigma}
+  \sigma_j = \Int(4\cdot 0.10) = 2.
+\end{equation}
+The first residual is
+\begin{equation}
+  \label{eq:sqrt:radix2_near_quarter_r1}
+  R_1 = 2\left(X-\frac{1}{4}\right) \ge 0,
+\end{equation}
+and if all later digits remain zero, the recurrence reduces to
+\begin{equation}
+  \label{eq:sqrt:radix2_near_quarter_zero_recurrence}
+  R_k = 2R_{k-1}, \qquad k\ge 2.
+\end{equation}
+Thus the residual remains nonnegative on this path.
+Since truncation is one-sided,
+\[
+  0 \le 2R_j - t_j < 2^{-(\alpha-1)}
+  \quad \Longrightarrow \quad
+  t_j > -2^{-(\alpha-1)}.
+\]
+With $\alpha=1$, this implies
+\begin{equation}
+  \label{eq:sqrt:radix2_near_quarter_tau}
+  \tau_j = \Int(2t_j) \ge -1.
+\end{equation}
+Therefore the negative-digit region of \cref{eq:sqrt:radix2_logic} is unreachable, and the selector
+reduces to
+\begin{equation}
+  \label{eq:sqrt:radix2_logic_near_quarter}
+  s_{j+1} =
+  \begin{cases}
+    1 & \text{if } 0 \le \tau_j < 2(\sigma_j+1), \\
+    0 & \text{if } -1 \le \tau_j \le \sigma_j - 2,
+  \end{cases}
+  \qquad \sigma_j = 2.
+\end{equation}
+
+\subsubsection{Startup path: radicand close to \texorpdfstring{$1$}{1}}
+\label{sssec:sqrt:radix2_near_one}
+
+At the high end of the normalized interval, initialization may select a run of zeros:
+\[
+  s_1 = s_2 = \dotsc = s_j = 0.
+\]
+This is the complementary boundary case $\sigma_j=4$.
+Then the partial root remains fixed at
+\begin{equation}
+  \label{eq:sqrt:radix2_near_one_sj}
+  S_j = S_0 = 1,
+\end{equation}
+so
+\begin{equation}
+  \label{eq:sqrt:radix2_near_one_sigma}
+  \sigma_j = \Int(4\cdot 1.00) = 4.
+\end{equation}
+Because $X<1$,
+\begin{equation}
+  \label{eq:sqrt:radix2_near_one_r1}
+  R_1 = 2(X-1) < 0.
+\end{equation}
+If subsequent digits are zero, then again $R_k = 2R_{k-1}$, so the residual stays negative.
+Consequently the truncated residual estimate also stays negative:
+\begin{equation}
+  \label{eq:sqrt:radix2_near_one_tau}
+  \tau_j \le -1.
+\end{equation}
+Therefore the positive-digit region of \cref{eq:sqrt:radix2_logic} is unreachable, and the selector
+reduces to
+\begin{equation}
+  \label{eq:sqrt:radix2_logic_near_one}
+  s_{j+1} =
+  \begin{cases}
+    0  & \text{if } -(\sigma_j-1) \le \tau_j \le -1, \\
+    -1 & \text{if } -2\sigma_j - 2 < \tau_j \le -2,
+  \end{cases}
+  \qquad \sigma_j = 4.
+\end{equation}
+
+\subsection{Worked example: radix-4 square root}
+\label{ssec:sqrt:radix4}
+
+For radix 4 we use the digit set
+\[
+  s_{j+1} \in \{-2,-1,0,1,2\},
+\]
+so again $a=2$ and $\rho=2/3$.
+Substituting these values into \cref{eq:sqrt:selection_interval} gives the exact selector intervals
+\begin{equation}
+  \label{eq:sqrt:radix4_intervals}
+  s_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{8}{3}S_j + \frac{16}{9}4^{-(j+1)} \le 4R_j \le \frac{16}{3}S_j + \frac{64}{9}4^{-(j+1)}, \\
+    1  & \text{if } \frac{2}{3}S_j + \frac{1}{9}4^{-(j+1)} \le 4R_j \le \frac{10}{3}S_j + \frac{25}{9}4^{-(j+1)}, \\
+    0  & \text{if } -\frac{4}{3}S_j + \frac{4}{9}4^{-(j+1)} \le 4R_j \le \frac{4}{3}S_j + \frac{4}{9}4^{-(j+1)}, \\
+    -1 & \text{if } -\frac{10}{3}S_j + \frac{25}{9}4^{-(j+1)} \le 4R_j \le -\frac{2}{3}S_j + \frac{1}{9}4^{-(j+1)}, \\
+    -2 & \text{if } -\frac{16}{3}S_j + \frac{64}{9}4^{-(j+1)} \le 4R_j \le -\frac{8}{3}S_j + \frac{16}{9}4^{-(j+1)}.
+  \end{cases}
+\end{equation}
+
+Now define the truncated integer variables
+\begin{align}
+  \label{eq:sqrt:radix4_tau_def}
+  \tau_j &= \Int\bigl(2^{\alpha}t_j\bigr),
+  &
+  \tau_j &\le 2^{\alpha+2}R_j < \tau_j+2, \\
+  \label{eq:sqrt:radix4_sigma_def}
+  \sigma_j &= \Int\bigl(2^{\beta}S_{j,\text{trunc}}\bigr),
+  &
+  \sigma_j &\le 2^{\beta}S_j \le \sigma_j + 1 - 2^{\beta}\ulp.
+\end{align}
+For the interior steady-state selector we choose
+\begin{equation}
+  \label{eq:sqrt:radix4_alpha_beta_choice}
+  \alpha = 4,
+  \qquad
+  \beta = 4.
+\end{equation}
+At this precision the full truncated-root range is $\sigma_j \in \{8,9,\dotsc,15,16\}$.
+The interior states are $\sigma_j \in \{9,\dotsc,15\}$; the boundary values $\sigma_j=8$ and
+$\sigma_j=16$ correspond to startup paths near $X=1/4$ and $X=1$, and are treated separately below.
+Under that convention,
+\begin{align}
+  \label{eq:sqrt:radix4_tau_val}
+  \tau_j &= \Int\bigl(16t_j\bigr) \in \{-128,\dotsc,127\},
+  &
+  \tau_j &\le 64R_j < \tau_j+2, \\
+  \label{eq:sqrt:radix4_sigma_val}
+  \sigma_j &= \Int\bigl(16S_{j,\text{trunc}}\bigr) \in \{9,\dotsc,15\},
+  &
+  \sigma_j &\le 16S_j \le \sigma_j + 1 - 16\cdot 4^{-j}.
+\end{align}
+
+The continuity condition now contains explicit $j$-dependent terms.
+Writing the four adjacent boundaries explicitly produces
+\begin{align}
+  \text{boundary }(2,1):
+  &\quad
+  \frac{2}{3}2^{-\beta}\sigma_j - \frac{8}{3}2^{-\beta} - 2^{-(\alpha-1)} \ge 0,
+  \label{eq:sqrt:radix4_cont_21} \\
+  \text{boundary }(1,0):
+  &\quad
+  \frac{2}{3}2^{-\beta}\sigma_j - \frac{2}{3}2^{-\beta} - 2^{-(\alpha-1)} \ge 0,
+  \label{eq:sqrt:radix4_cont_10} \\
+  \text{boundary }(0,-1):
+  &\quad
+  \frac{2}{3}2^{-\beta}\sigma_j - \frac{2}{3}2^{-\beta} - 2^{-(\alpha-1)} - \frac{4}{9}B^{-(j+1)} \ge 0,
+  \label{eq:sqrt:radix4_cont_0m1} \\
+  \text{boundary }(-1,-2):
+  &\quad
+  \frac{2}{3}2^{-\beta}\sigma_j - \frac{8}{3}2^{-\beta} - 2^{-(\alpha-1)} - \frac{25}{9}B^{-(j+1)} \ge 0.
+  \label{eq:sqrt:radix4_cont_m1m2}
+\end{align}
+The last one is the most restrictive.
+Using $B=4$, $\alpha=4$, $\beta=4$, and the worst-case \emph{interior} partial-root index
+$\sigma_j=9$, it becomes
+\begin{align}
+  \frac{2}{3}\cdot 2^{-4}\cdot 9 - \frac{8}{3}\cdot 2^{-4} - 2^{-3} - \frac{25}{9}4^{-(j+1)} &\ge 0 \nonumber \\
+  \frac{1}{12} - \frac{25}{9}4^{-(j+1)} &\ge 0.
+  \label{eq:sqrt:radix4_startup_restriction}
+\end{align}
+Thus the interior radix-4 selector is a steady-state selector: it applies for $j\ge 2$ and for
+interior partial-root indices $\sigma_j \in \{9,\dotsc,15\}$.
+The remaining work is to cover the two boundary startup paths.
+
+For $j\ge 2$, a convenient integer selector table is
+\begin{equation}
+  \label{eq:sqrt:radix4_logic}
+  s_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{8}{3}(\sigma_j+1) \le \tau_j < \frac{16}{3}(\sigma_j+1), \\
+    1  & \text{if } \frac{2}{3}(\sigma_j+1) \le \tau_j \le \frac{10}{3}\sigma_j - 2, \\
+    0  & \text{if } -\frac{4}{3}\left(\sigma_j - \frac{1}{12}\right) \le \tau_j \le \frac{4}{3}\sigma_j - 2, \\
+    -1 & \text{if } -\frac{10}{3}\left(\sigma_j - \frac{5}{24}\right) \le \tau_j \le -\frac{2}{3}(\sigma_j+1) - 2, \\
+    -2 & \text{if } -\frac{16}{3}(\sigma_j+1) - 2 < \tau_j \le -\frac{8}{3}(\sigma_j+1) - 2.
+  \end{cases}
+\end{equation}
+
+\subsubsection{Startup path: radicand close to \texorpdfstring{$1/4$}{1/4}}
+\label{sssec:sqrt:radix4_near_quarter}
+
+When the radicand is close to $1/4$, initialization chooses the most negative first digit,
+\[
+  s_1 = -2,
+\]
+which is the boundary case $\sigma_j=8$ omitted from the interior selector.
+If the next digits are then zero, 
+\begin{equation}
+  \label{eq:sqrt:radix4_near_quarter_s1}
+  S_1 = 1 - \frac{2}{4} = \frac{1}{2},
+\end{equation}
+so
+\begin{equation}
+  \label{eq:sqrt:radix4_near_quarter_sj}
+  S_j = \frac{1}{2}, \qquad j\ge 1.
+\end{equation}
+Hence
+\begin{equation}
+  \label{eq:sqrt:radix4_near_quarter_sigma}
+  \sigma_j = \Int(16\cdot 0.1000) = 8.
+\end{equation}
+The residual is nonnegative on this path because
+\begin{equation}
+  \label{eq:sqrt:radix4_near_quarter_r1}
+  R_1 = 4\left(X-\frac{1}{4}\right) \ge 0,
+\end{equation}
+and with zero digits thereafter the recurrence reduces to $R_k = 4R_{k-1}$.
+Since truncation is one-sided,
+\[
+  0 \le 4R_j - t_j < 2^{-(\alpha-1)}
+  \quad \Longrightarrow \quad
+  t_j > -2^{-(\alpha-1)}.
+\]
+For $\alpha=4$ this implies
+\begin{equation}
+  \label{eq:sqrt:radix4_near_quarter_tau}
+  \tau_j = \Int(16t_j) \ge -1.
+\end{equation}
+Since the negative selector regions are unreachable, the table reduces to
+\begin{equation}
+  \label{eq:sqrt:radix4_logic_near_quarter}
+  s_{j+1} =
+  \begin{cases}
+    2 & \text{if } \frac{8}{3}(\sigma_j+1) \le \tau_j < \frac{16}{3}(\sigma_j+1), \\
+    1 & \text{if } \frac{2}{3}(\sigma_j+1) \le \tau_j \le \frac{10}{3}\sigma_j - 2, \\
+    0 & \text{if } -1 \le \tau_j \le \frac{4}{3}\sigma_j - 2,
+  \end{cases}
+  \qquad \sigma_j = 8.
+\end{equation}
+
+\subsubsection{Startup path: radicand close to \texorpdfstring{$1$}{1}}
+\label{sssec:sqrt:radix4_near_one}
+
+When the radicand is close to $1$, the selected digits can remain zero for several steps:
+\[
+  s_1 = s_2 = \dotsc = s_j = 0.
+\]
+This is the complementary boundary case $\sigma_j=16$.
+Then
+\begin{equation}
+  \label{eq:sqrt:radix4_near_one_sj}
+  S_j = S_0 = 1,
+\end{equation}
+so
+\begin{equation}
+  \label{eq:sqrt:radix4_near_one_sigma}
+  \sigma_j = \Int(16\cdot 1.0000) = 16.
+\end{equation}
+The residual stays negative because
+\begin{equation}
+  \label{eq:sqrt:radix4_near_one_r1}
+  R_1 = 4(X-1) < 0,
+\end{equation}
+and if the subsequent digits are zero then again $R_k = 4R_{k-1}$.
+Thus the truncated residual index satisfies
+\begin{equation}
+  \label{eq:sqrt:radix4_near_one_tau}
+  \tau_j \le -1.
+\end{equation}
+Now revisit the most restrictive continuity inequality
+\cref{eq:sqrt:radix4_cont_m1m2} with $\sigma_j=16$:
+\begin{align}
+  \frac{2}{3}\cdot 2^{-4}\cdot 16 - \frac{8}{3}\cdot 2^{-4} - 2^{-3} - \frac{25}{9}4^{-(j+1)} &\ge 0 \nonumber \\
+  \frac{3}{8} - \frac{25}{9}4^{-(j+1)} &\ge 0.
+  \label{eq:sqrt:radix4_near_one_continuity}
+\end{align}
+This fails only at $j=0$, which is already handled by initialization, and holds for $j=1$ because
+\[
+  \frac{3}{8} - \frac{25}{144} = \frac{29}{144} > 0.
+\]
+So along the near-one startup path, the steady-state precision is already sufficient from the first
+post-initialization iteration onward.
+Since the positive selector regions are unreachable, the table reduces to
+\begin{equation}
+  \label{eq:sqrt:radix4_logic_near_one}
+  s_{j+1} =
+  \begin{cases}
+    0  & \text{if } -\frac{4}{3}\left(\sigma_j-\frac{1}{3}\right) \le \tau_j \le -1, \\
+    -1 & \text{if } -\frac{10}{3}\left(\sigma_j-\frac{5}{6}\right) \le \tau_j \le -\frac{2}{3}\sigma_j - 2, \\
+    -2 & \text{if } -\frac{16}{3}\sigma_j - 2 < \tau_j \le -\frac{8}{3}\sigma_j - 2,
+  \end{cases}
+  \qquad \sigma_j = 16.
+\end{equation}
+
+\subsection{Selector plots}
+\label{ssec:sqrt:figures}
+
+\Cref{fig:sqrt:rds} shows the root-digit regions for the radix-2 and radix-4 selectors.
+As in the division plots, the basic versions keep the overlap regions explicit, while the optimized
+plot shows one deterministic overlap assignment.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[
+      width=\textwidth,
+      height=3.5\textwidth,
+      keepaspectratio=true
+    ]{../figures/square_root/radix2_rds_basic_quadrants_1_4.pdf}
+    \caption{Radix-2 basic \RDS}
+    \label{fig:sqrt:radix2_basic}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[
+      width=\textwidth,
+      height=3.5\textwidth,
+      keepaspectratio=true
+    ]{../figures/square_root/radix4_rds_basic_quadrants_1_4.pdf}
+    \caption{Radix-4 basic \RDS}
+    \label{fig:sqrt:radix4_basic}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[
+      width=\textwidth,
+      height=3.5\textwidth,
+      keepaspectratio=true
+    ]{../figures/square_root/radix4_rds_optimized_quadrants_1_4.pdf}
+    \caption{Radix-4 optimized \RDS}
+    \label{fig:sqrt:radix4_optimized}
+  \end{subfigure}
+  \caption{Root-digit selection regions. The horizontal axis is the truncated partial-root index
+  $\sigma_j$, and the vertical axis is the truncated residual index $\tau_j$.}
+  \label{fig:sqrt:rds}
+\end{figure}
+
+\clearpage
+
+\section{Resolving Overlap Deterministically}
+\label{sec:optimized_overlap}
+
+The ``basic'' selectors in \cref{sec:division,sec:sqrt} intentionally leave overlap visible.
+That is mathematically natural: inside an overlap box, more than one digit is valid, so the selector
+really does have freedom.
+A hardware implementation, however, usually wants a deterministic answer.
+The practical question is therefore not whether overlap exists, but how to assign those overlap
+boxes in a way that preserves correctness and keeps the logic simple.
+
+\subsection{What is being optimized?}
+\label{ssec:optimized_overlap:goal}
+
+Fix one column of the selector table, i.e. fix one truncated divisor index $\delta$ for division or
+one truncated partial-root index $\sigma_j$ for square root.
+Within that column, neighboring digits have integer residual ranges that overlap.
+Suppose the lower digit is valid up to an integer threshold $x$, and the higher digit is valid from
+an integer threshold $y$ onward, with
+\[
+  y \le x.
+\]
+Then the inclusive interval $[y,x]$ is the overlap region.
+To eliminate the overlap, we need to replace the pair $(x,y)$ by a new pair $(x',y')$ such that
+\begin{equation}
+  \label{eq:optimized_overlap:no_overlap_pair}
+  x' < y'
+  \qquad \text{and typically} \qquad
+  y' = x' + 1.
+\end{equation}
+The lower digit then occupies all indices up to $x'$, and the higher digit occupies all indices from
+$y'$ onward.
+
+Many such choices are valid.
+The criterion used by the accompanying scripts is not mathematical necessity but logic simplicity:
+choose $x'$ and $y'$ so that the boundaries align with convenient congruence classes, which in turn
+simplifies Karnaugh-map grouping and downstream logic minimization.
+
+\subsection{A simple modulo-aligned transformation}
+\label{ssec:optimized_overlap:transform}
+
+One practical rule is the following transformation on the overlap endpoints.
+Let
+\begin{equation}
+  \label{eq:optimized_overlap:diff}
+  \text{diff} = x-y.
+\end{equation}
+The value of \texttt{diff} indicates how wide the overlap is.
+The transformation chooses a modulus $M$ based on that width:
+\begin{equation}
+  \label{eq:optimized_overlap:modulus_choice}
+  M =
+  \begin{cases}
+    4  & \text{if } 1 \le \text{diff} \le 2, \\
+    8  & \text{if } 3 \le \text{diff} \le 6, \\
+    16 & \text{if } 7 \le \text{diff} \le 14.
+  \end{cases}
+\end{equation}
+The degenerate case $\text{diff}=0$ is handled separately.
+
+For $\text{diff}>0$, define
+\begin{align}
+  \label{eq:optimized_overlap:base}
+  \text{base} &= \left\lfloor \frac{y-1}{M} \right\rfloor M, \\
+  \label{eq:optimized_overlap:threshold}
+  \text{threshold} &= \text{base} + M - 1.
+\end{align}
+Then there are two candidate no-overlap pairs:
+\begin{align}
+  \label{eq:optimized_overlap:low_pair}
+  (x'_{\text{low}},y'_{\text{low}}) &= \left(\text{base}+\frac{M}{2}-1,\; \text{base}+\frac{M}{2}\right), \\
+  \label{eq:optimized_overlap:high_pair}
+  (x'_{\text{high}},y'_{\text{high}}) &= \left(\text{base}+M-1,\; \text{base}+M\right).
+\end{align}
+The rule is then
+\begin{equation}
+  \label{eq:optimized_overlap:rule}
+  (x',y') =
+  \begin{cases}
+    (x'_{\text{low}},y'_{\text{low}}) & \text{if } x < \text{threshold}, \\
+    (x'_{\text{high}},y'_{\text{high}}) & \text{if } x \ge \text{threshold}.
+  \end{cases}
+\end{equation}
+When $\text{diff}=0$, the overlap consists of a single point.
+The scripts break that tie by parity:
+\begin{equation}
+  \label{eq:optimized_overlap:diff_zero}
+  (x',y') =
+  \begin{cases}
+    (x,x+1) & \text{if } x \text{ is odd}, \\
+    (x-1,x) & \text{if } x \text{ is even}.
+  \end{cases}
+\end{equation}
+Either choice removes the overlap; the parity rule simply keeps the boundaries aligned on a regular
+grid.
+
+\subsection{Why this helps}
+\label{ssec:optimized_overlap:why}
+
+The point of \cref{eq:optimized_overlap:rule,eq:optimized_overlap:diff_zero} is not that it is the
+only valid transformation.
+Its value is that the new boundaries fall into a small number of repeated patterns:
+\begin{itemize}
+  \item mod-4 boundaries for narrow overlaps,
+  \item mod-8 boundaries for medium overlaps, and
+  \item mod-16 boundaries for wide overlaps.
+\end{itemize}
+Those regular patterns are easier to minimize than an arbitrary assignment of every overlap point to
+its left or right neighbor.
+This is exactly what distinguishes the ``basic'' and ``optimized'' plots in
+\cref{fig:division:qds,fig:sqrt:rds}.
+The basic plots expose every valid overlap region; the optimized plots apply a deterministic
+modulo-aligned assignment to remove those overlaps.
+
+\clearpage
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+Digit-recurrence algorithms solve a hardware problem by exploiting a mathematical one.
+The mathematical requirement is to keep the residual bounded while producing one output digit per
+iteration.
+The hardware requirement is to make each step of the loop fast enough for a practical divider or
+square-root unit.
+Redundancy connects the two: once adjacent digit intervals overlap, truncated state is sufficient
+for selection, so the critical path no longer needs an exact full-width carry-propagating
+comparison.
+
+This tutorial developed that idea from first principles.
+For division we started from the exact quotient relation, derived the digit expansion, bounded the
+tail of the redundant representation, introduced the scaled residual, and obtained the recurrence
+\[
+  R_{j+1} = BR_j - q_{j+1}D.
+\]
+That recurrence led directly to exact digit-selection intervals and then to practical radix-2 and
+radix-4 selector tables built from truncated residual and divisor information.
+
+For square root the same structure remains, but the recurrence
+\[
+  R_{j+1} = BR_j - s_{j+1}\left(2S_j + s_{j+1}B^{-(j+1)}\right)
+\]
+also depends on the evolving partial root.
+That extra dependence explains why square-root startup requires more care and why it is useful to
+distinguish interior steady-state selectors from boundary startup paths.
+
+Two implementation lessons matter most.
+First, the continuity condition is the bridge from theory to hardware: it quantifies exactly how
+much truncation the selector can tolerate while still leaving at least one valid digit in every
+table entry.
+Second, once continuity is guaranteed, overlap becomes a design resource.
+It may be shown explicitly in a pedagogical ``basic'' selector, or resolved deterministically to
+produce a smaller and easier-to-minimize implementation.
+
+The digit-recurrence framework is therefore more than a recurrence formula.
+It provides a full workflow for choosing the digit set, normalizing the operands, bounding the
+residual, sizing the selector inputs, and converting overlap into real hardware logic.
+That combination is why SRT-style division and square root remain central building blocks in
+floating-point units.
+
+\end{document}

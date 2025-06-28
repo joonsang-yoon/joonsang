@@ -1,0 +1,17 @@
+# Bloop build server
+.bloop/
+
+# Build Server Protocol
+.bsp/
+
+# Metals language server
+.metals/
+
+# VS Code
+.vscode/
+
+# Generated files
+generated/
+
+# Build output
+out/

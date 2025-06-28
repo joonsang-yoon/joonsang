@@ -38,6 +38,7 @@ help:
 	@echo "               Examples:"
 	@echo "                 make verilog MODULE=TopLevelModule.CustomDesign"
 	@echo "                 make verilog MODULE=ExternalModule.AnotherCustomDesign"
+	@echo "                 make verilog MODULE='HardFloat.AddRecFN(11, 53)'"
 	@echo "test         : Run all tests"
 	@echo "reformat     : Reformat all source files"
 	@echo "check-format : Check formatting of all source files"

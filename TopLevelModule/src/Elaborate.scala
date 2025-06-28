@@ -45,6 +45,20 @@ object Elaborate extends App {
 
   try {
     def createModule(): RawModule = moduleName match {
+      case module if module.startsWith("HardFloat.AddRecFN") =>
+        // Support syntax like "HardFloat.AddRecFN(5,11)" for different bit widths
+        val paramPattern = """HardFloat\.AddRecFN\((\d+),(\d+)\)""".r
+        module match {
+          case paramPattern(exp, sig) =>
+            new HardFloat.AddRecFN(exp.toInt, sig.toInt)
+          case _ =>
+            new HardFloat.AddRecFN(8, 24) // Default: 32-bit float
+        }
+
+      case "TopLevelModule.CustomDesign" =>
+        new TopLevelModule.CustomDesign()
+
+      // For other modules, try reflection with no-arg constructor
       case _ =>
         val clazz = Class.forName(moduleName)
         val constructor = clazz.getConstructor()

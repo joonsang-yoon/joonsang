@@ -1,0 +1,858 @@
+\documentclass{article}
+
+% Standard packages for mathematics, symbols, and formatting
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{subcaption}
+
+% Page layout and cross-referencing
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+
+% Set up hyperref for better navigation
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  filecolor=magenta,
+  urlcolor=cyan,
+  pdftitle={A Tutorial on Digit Recurrence Algorithms for Division and Square Root},
+  pdfpagemode=FullScreen,
+}
+
+\DeclareMathOperator{\Int}{Int}
+
+% Document metadata
+\title{A Tutorial on Digit Recurrence Algorithms for Division and Square Root}
+\author{Joonsang Yoon}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  Digit recurrence algorithms are a fundamental class of iterative methods for performing division and square root operations in digital computer systems.
+  These algorithms, most notably the SRT (Sweeney, Robertson, and Tocher) algorithm, achieve high performance by using a redundant number system for the result digits (quotient or root).
+  This redundancy allows for the use of fast, low-precision estimates of the partial remainder and divisor/root to select the next digit, thereby avoiding slow, full-width carry-propagating additions in the critical path of the iteration.
+  This paper provides a detailed, step-by-step derivation of the underlying theory of digit recurrence algorithms.
+  We derive the recurrence relations for both division and square root, establish the necessary conditions for convergence, and detail the design process for the digit selection logic.
+  We present concrete examples for Radix-2 and Radix-4, including the analysis of design parameters and the derivation of the selection logic tables based on truncated operands.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:introduction}
+Division and square root are fundamental arithmetic operations in modern microprocessors, essential for a wide range of applications in scientific computing, signal processing, and graphics.
+Unlike addition and multiplication, which can be implemented with relatively straightforward combinatorial logic, division and square root are inherently more complex, typically requiring iterative algorithms.
+Among the most prevalent methods for implementing these operations in hardware are digit recurrence algorithms.
+
+The core idea of a digit recurrence algorithm is to compute the result (quotient or square root) one digit at a time, from most significant to least significant.
+At each step of the iteration, a new digit of the result is selected, and a new partial remainder (or residual) is calculated.
+The key to a fast implementation lies in the digit selection process.
+A naive approach would require a full-precision comparison between the partial remainder and multiples of the divisor (or partial root), which would involve a slow carry-propagating addition.
+
+SRT algorithms, a well-known family of digit recurrence algorithms, overcome this bottleneck by using a redundant digit set for the result.
+By allowing digits to be, for example, $\{-1, 0, 1\}$ in Radix-2, the constraints on the digit selection are relaxed.
+This creates an overlap between the selection regions for different digits, meaning that a correct choice can be made based on a low-precision, truncated estimate of the partial remainder.
+This allows the main recurrence loop to be very fast, typically dominated by a short carry-propagate addition and a table lookup.
+
+This paper serves as a tutorial on the design and analysis of digit recurrence algorithms.
+We aim to provide a thorough and clear exposition of the mathematical foundations.
+The structure of the paper is as follows:
+\begin{itemize}
+  \item Section \ref{sec:redundancy} introduces the concept of redundant digit sets and the redundancy factor $\rho$, which is central to the functionality of these algorithms.
+  \item Section \ref{sec:division} provides a complete derivation of the digit recurrence algorithm for division. We establish the residual recurrence, the containment condition, and the digit selection intervals. We then analyze detailed examples for Radix-2 and Radix-4, showing how to design the practical selection logic using truncated operands.
+  \item Section \ref{sec:sqrt} extends the methodology to the square root operation. We derive the corresponding recurrence relations and selection intervals, highlighting the similarities and key differences compared to division. We again provide detailed Radix-2 and Radix-4 examples, including a discussion of challenges that arise in high-radix square root implementations.
+  \item Section \ref{sec:conclusion} summarizes the key principles and design considerations discussed throughout the paper.
+\end{itemize}
+
+\section{Redundancy in Digit Sets}
+\label{sec:redundancy}
+The cornerstone of high-speed digit recurrence algorithms is the use of a redundant number system for the digits of the result.
+Instead of a standard non-redundant set like $\{0, 1, \dots, B-1\}$ for radix $B$, a symmetric, redundant digit set is used.
+
+At step $j$ of the algorithm, the selected digit $q_{j+1}$ (for division) or $s_{j+1}$ (for square root) is chosen from the set:
+\begin{equation}
+  q_{j+1}, s_{j+1} \in \{-a, -a+1, \dots, a-1, a\}
+\end{equation}
+The value $a$ is an integer that defines the magnitude of the largest digit in the set.
+For the algorithm to function correctly, $a$ must be chosen within a specific range related to the radix $B$:
+\begin{equation}
+  \frac{B-1}{2} < a \leq B-1
+\end{equation}
+The lower bound ensures that the digit set is sufficiently rich to represent any number, while the upper bound is a practical limit for SRT-type algorithms.
+
+The degree of redundancy is quantified by the redundancy factor, $\rho$, defined as:
+\begin{equation}
+  \rho = \frac{a}{B-1}
+\end{equation}
+Combining the previous two expressions, we see the range for $\rho$:
+\begin{equation}
+  \rho \in \left(\frac{1}{2}, 1\right]
+\end{equation}
+The condition $\rho > 1/2$ is critical.
+It ensures that the selection intervals for adjacent digits overlap, which, as we will see, allows for imprecision in the selection process.
+A value of $\rho=1$ corresponds to a ``maximally redundant'' system (for a given $B$), while $\rho \to 1/2$ corresponds to minimal redundancy.
+Non-redundant systems correspond to $\rho = 1/2$.
+
+\section{Division by Digit Recurrence}
+\label{sec:division}
+We begin by developing the algorithm for division.
+The fundamental relationship is:
+\begin{equation}
+  N = D Q + R
+\end{equation}
+where $N$ is the dividend, $D$ is the divisor, $Q$ is the quotient, and $R$ is the final remainder.
+For fractional arithmetic, it is standard practice to normalize the operands.
+We assume the following ranges:
+\begin{align*}
+  N &\in \left[\frac{1}{4}, \frac{1}{2}\right) && \text{(Dividend)} \\
+  D &\in \left[\frac{1}{2}, 1\right) && \text{(Divisor)}
+\end{align*}
+These ranges guarantee that the quotient $Q$ is also in a predictable range, preventing overflow and simplifying the algorithm:
+\begin{equation}
+  Q \in \left(\frac{N_{\min}}{D_{\max}}, \frac{N_{\max}}{D_{\min}}\right) = \left(\frac{1/4}{1}, \frac{1/2}{1/2}\right) = \left(\frac{1}{4}, 1\right)
+\end{equation}
+
+The quotient $Q$ is computed iteratively over $n$ steps, where $j=0,1,\dots,n-1$.
+Let $Q_j$ be the quotient estimate after $j$ digits ($q_1, \dots, q_j$) have been determined.
+The quotient is refined at each step by adding a new term:
+\begin{equation}
+  \label{eq:div_quotient_recurrence}
+  Q_{j+1} = Q_j + q_{j+1} B^{-(j+1)}
+\end{equation}
+Unfolding this recurrence shows the composition of the quotient at step $j$:
+\begin{equation}
+  \text{At step } j, \quad Q_{j+1} = Q_0 + \sum_{i=0}^{j} q_{i+1} B^{-(i+1)}
+\end{equation}
+After $n$ iterations, the final quotient is computed to the desired precision:
+\begin{equation}
+  \text{At step } j=n-1, \quad Q_n = Q_0 + \sum_{i=0}^{n-1} q_{i+1} B^{-(i+1)} = Q
+\end{equation}
+The core of the algorithm is ensuring that the process converges to the true quotient.
+At any step $j$, the error in the current approximation $Q_{j+1}$ is given by:
+\begin{equation}
+  \varepsilon_{j+1} = \frac{N}{D} - Q_{j+1} = \sum_{i=j+1}^{\infty} q_{i+1} B^{-(i+1)}
+\end{equation}
+The magnitude of this error is bounded by the largest possible value of the remaining undiscovered digits.
+Using the digit bound $a$:
+\begin{equation}
+  \left| \sum_{i=j+1}^{\infty} q_{i+1} B^{-(i+1)} \right| \leq \sum_{i=j+1}^{\infty} a B^{-(i+1)} = a B^{-(j+2)} \sum_{k=0}^{\infty} B^{-k} = a B^{-(j+2)} \frac{1}{1-B^{-1}} = \frac{a}{B-1} B^{-(j+1)}
+\end{equation}
+This gives the fundamental error bound in terms of the redundancy factor $\rho$:
+\begin{equation}
+  \label{eq:div_error_bound}
+  \left| \varepsilon_{j+1} \right| \leq \rho B^{-(j+1)}
+\end{equation}
+Substituting the definition of the error, we get:
+\begin{equation}
+  \left| \frac{N}{D} - Q_{j+1} \right| \leq \rho B^{-(j+1)}
+\end{equation}
+To work with integer-like quantities in hardware, we define a scaled partial remainder (or residual), $R_{j+1}$.
+Multiplying by $D$ and scaling by $B^{j+1}$ gives:
+\begin{equation}
+  \left| B^{j+1} \left(N - D Q_{j+1}\right) \right| \leq \rho D
+\end{equation}
+We define the scaled residual at the end of step $j$ as:
+\begin{equation}
+  \label{eq:div_residual_def}
+  R_{j+1} = B^{j+1} \left(N - D Q_{j+1}\right)
+\end{equation}
+This leads to the crucial \textit{containment condition}: the residual must always be bounded by a multiple of the divisor.
+\begin{equation}
+  \label{eq:div_containment}
+  \left| R_{j+1} \right| \leq \rho D
+\end{equation}
+The final, unscaled remainder $R$ is related to the final residual $R_n$ by:
+\begin{equation}
+  \text{At step } j=n-1, \quad R_n = B^n \left(N - D Q_n\right) = B^n R
+\end{equation}
+To implement the algorithm, we need an iterative way to compute $R_{j+1}$ from $R_j$.
+We derive this recurrence from its definition in \eqref{eq:div_residual_def}:
+\begin{align*}
+  R_{j+1} &= B^{j+1} \left(N - D Q_{j+1}\right) && \text{Definition of } R_{j+1} \\
+  &= B^{j+1} \left(N - D \left(Q_j + q_{j+1} B^{-(j+1)}\right)\right) && \text{Using \eqref{eq:div_quotient_recurrence}} \\
+  &= B^{j+1} \left(N - D Q_j\right) - B^{j+1} D q_{j+1} B^{-(j+1)} && \text{Distributing } D \\
+  &= B \left(B^j \left(N - D Q_j\right)\right) - q_{j+1} D && \text{Simplifying} \\
+  &= B R_j - q_{j+1} D && \text{Using the definition of } R_j
+\end{align*}
+This gives the central recurrence relation for division:
+\begin{equation}
+  \label{eq:div_residual_recurrence}
+  R_{j+1} = B R_j - q_{j+1} D
+\end{equation}
+At each step $j$, the algorithm performs two main tasks: (1) select a digit $q_{j+1}$ based on the current residual $R_j$ and the divisor $D$, and (2) compute the next residual $R_{j+1}$ using this recurrence.
+The selection of $q_{j+1}$ must be done such that the next residual $R_{j+1}$ satisfies the containment condition \eqref{eq:div_containment}.
+
+\subsection{Initialization}
+\label{ssec:div_init}
+The initial values must satisfy the containment condition $|R_0| \leq \rho |D|$.
+The choice depends on $\rho$ and affects the assumed operand ranges.
+\begin{itemize}
+  \item For $\rho = 1$:
+    The initialization is $Q_0 = 0$ and $R_0 = N$.
+    This requires the dividend range to be $R_0 = N \in \left[-\frac{1}{2}, \frac{1}{2}\right)$.
+    The containment check is:
+    \begin{equation}
+      |R_0| \leq \frac{1}{2} \leq \rho |D|_{\min}
+    \end{equation}
+  \item For $\rho \in \left(\frac{1}{2}, 1\right)$:
+    The initialization is $Q_0 = 0$ and $R_0 = \frac{N}{2}$.
+    This requires the dividend range to be $R_0 = \frac{N}{2} \in \left[-\frac{1}{4}, \frac{1}{4}\right)$.
+    The containment check is:
+    \begin{equation}
+      |R_0| \leq \frac{1}{4} \leq \rho |D|_{\min}
+    \end{equation}
+\end{itemize}
+Thus, in both cases, the containment condition is satisfied for the specified operand ranges.
+
+\subsection{Digit Selection for Positive Divisor}
+\label{ssec:div_pos}
+For a positive divisor, $D \in \left[\frac{1}{2}, 1\right)$, the containment condition from \eqref{eq:div_containment} is:
+\begin{equation}
+  \left| R_{j+1} \right| \leq \rho D \implies -\rho D \leq R_{j+1} \leq \rho D
+\end{equation}
+We substitute the recurrence relation \eqref{eq:div_residual_recurrence} into this inequality:
+\begin{equation}
+  -\rho D \leq B R_j - q_{j+1} D \leq \rho D
+\end{equation}
+To find the condition that $B R_j$ must satisfy to select a particular digit $q_{j+1}$, we add $q_{j+1} D$ to all parts of the inequality:
+\begin{equation}
+  \label{eq:div_selection_interval_pos}
+  \left(q_{j+1} - \rho\right) D \leq B R_j \leq \left(q_{j+1} + \rho\right) D
+\end{equation}
+This equation defines a selection interval for each possible digit $q_{j+1}$.
+The goal of the digit selection logic is to determine which interval the shifted residual $B R_j$ falls into.
+The fact that $\rho > 1/2$ ensures these intervals overlap, making the selection robust to small errors.
+
+\subsection{Digit Selection for Negative Divisor}
+\label{ssec:div_neg}
+For a negative divisor, $D \in \left[-1, -\frac{1}{2}\right)$, the magnitude is $|D| = -D$.
+The containment condition is still based on the magnitude:
+\begin{equation}
+  \left| R_{j+1} \right| \leq \rho |D| \implies \left| R_{j+1} \right| \leq -\rho D
+\end{equation}
+This expands to:
+\begin{equation}
+  \rho D \leq R_{j+1} \leq -\rho D
+\end{equation}
+Substituting the recurrence relation \eqref{eq:div_residual_recurrence}:
+\begin{equation}
+  \rho D \leq B R_j - q_{j+1} D \leq -\rho D
+\end{equation}
+Adding $q_{j+1} D$ yields the selection interval:
+\begin{equation}
+  \label{eq:div_selection_interval_neg}
+  \left(q_{j+1} + \rho\right) D \leq B R_j \leq \left(q_{j+1} - \rho\right) D
+\end{equation}
+
+\subsection{Example: Radix-2 SRT Division}
+\label{ssec:div_radix2}
+Let's consider the simplest and most common case: Radix-2 ($B=2$) with a maximally redundant digit set $\{-1, 0, 1\}$, which means we choose $a=1$.
+The redundancy factor is:
+\begin{equation}
+  \rho = \frac{a}{B-1} = \frac{1}{2-1} = 1
+\end{equation}
+
+\subsubsection{Positive Divisor}
+With $\rho=1$ and $B=2$, the selection intervals from \eqref{eq:div_selection_interval_pos} become:
+\begin{equation}
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 0 \leq 2 R_j \leq 2 D \\
+    0  & \text{if } -D \leq 2 R_j \leq D \\
+    -1 & \text{if } -2 D \leq 2 R_j \leq 0
+  \end{cases}
+\end{equation}
+These intervals overlap.
+For example, if $2R_j = 0.2D$, both $q_{j+1}=1$ and $q_{j+1}=0$ are valid choices.
+This overlap is what allows for a simplified implementation.
+
+In hardware, the residual $R_j$ is typically kept in carry-save form, to avoid slow carry propagation in the main loop.
+Let $2R_j = Y_j + Z_j$.
+To perform the comparisons in the selection logic, we would need to compute the full value of $2R_j$, which requires a fast adder.
+To avoid this, we compute an estimate of $2R_j$ by summing only a few of its most significant bits.
+
+Let the full-precision shifted residual be $2 R_j = r_{j,2\ldots0}.r_{j,-1\ldots-\infty}$.
+This value is the sum of two bit-vectors in carry-save representation: $Y_j = y_{j,2\ldots0}.y_{j,-1\ldots-\infty}$ and $Z_j = z_{j,2\ldots0}.z_{j,-1\ldots-\infty}$.
+\begin{equation}
+  r_{j,2\ldots0}.r_{j,-1\ldots-\infty} = y_{j,2\ldots0}.y_{j,-1\ldots-\infty} + z_{j,2\ldots0}.z_{j,-1\ldots-\infty}
+\end{equation}
+We form a truncated estimate $t_j$ by adding the top bits of $Y_j$ and $Z_j$ using a small carry-propagate adder (CPA).
+Let's say we use $\alpha$ fractional bits.
+\begin{equation}
+  t_{j,2\ldots0}.t_{j,-1\ldots-\alpha} = y_{j,2\ldots0}.y_{j,-1\ldots-\alpha} + z_{j,2\ldots0}.z_{j,-1\ldots-\alpha}
+\end{equation}
+This truncation introduces a one-sided error.
+The sum of the truncated parts is less than or equal to the true sum.
+\begin{equation}
+  0 \leq 2 R_j - t_{j,2\ldots0}.t_{j,-1\ldots-\alpha} < 2 \cdot 2^{-\alpha} = 2^{-(\alpha-1)}
+\end{equation}
+Similarly, we use a truncated version of the divisor $D$, using its first $\beta$ fractional bits.
+We define integer-valued estimates for use in a simple lookup table (PLA):
+\begin{align*}
+  \tau_j &= \Int\left(2^\alpha \cdot t_{j,2\ldots0}.t_{j,-1\ldots-\alpha}\right) \in \left\{-2^{\alpha+2}, \dots, 2^{\alpha+2}-1\right\} && \left(\tau_j \leq 2^{\alpha+1} R_j < \tau_j + 2\right) \\
+  \delta &= \Int\left(2^\beta \cdot 0.1d_{j,-2\ldots-\beta}\right) \in \left\{2^{\beta-1}, \dots, 2^\beta-1\right\} && \left(\delta \leq 2^\beta D < \delta + 1\right)
+\end{align*}
+The selection logic must choose a digit $k \in \{-1, 0, 1\}$ based on $\tau_j$ and $\delta$.
+To guarantee a correct choice, the selection regions, when mapped into the truncated domain, must still provide a valid choice for any possible input.
+The boundary between selecting digit $k$ and $k-1$ is called the comparison constant.
+The condition for a robust design is that the range of truncated residuals corresponding to digit $k-1$ must have sufficient overlap with the range for digit $k$.
+Let $L_k(D) = (k-\rho)D$ and $U_k(D) = (k+\rho)D$.
+The condition is:
+\begin{equation}
+  \min\left(U_{k-1,\mathrm{trunc}}\right) \geq \max\left(L_{k,\mathrm{trunc}}\right)
+\end{equation}
+where the min and max are taken over the uncertainty introduced by truncation.
+\begin{equation}
+  \min\left(U_{k-1,\mathrm{trunc}}\right) = \min\left(\left(k - 1 + \rho\right) D\right) - 2^{-(\alpha-1)}
+\end{equation}
+\begin{equation}
+  \max\left(L_{k,\mathrm{trunc}}\right) = \max\left(\left(k - \rho\right) D\right)
+\end{equation}
+This gives the continuity condition:
+\begin{equation}
+  \min\left(U_{k-1,\mathrm{trunc}}\right) - \max\left(L_{k,\mathrm{trunc}}\right) \geq 0
+\end{equation}
+We analyze this for different signs of the bounds.
+\begin{itemize}
+  \item For $k \geq 1$ ($k - 1 + \rho \geq 0$ and $k - \rho \geq 0$):
+    \begin{equation}
+      \left(\left(\left(k - 1 + \rho\right) \left(2^{-\beta} \delta\right)\right) - 2^{-(\alpha-1)}\right) - \left(\left(k - \rho\right) \left(2^{-\beta} \left(\delta + 1\right)\right)\right) \geq 0
+    \end{equation}
+  \item For $k \leq 0$ ($k - 1 + \rho \leq 0$ and $k - \rho \leq 0$):
+    \begin{equation}
+      \left(\left(\left(k - 1 + \rho\right) \left(2^{-\beta} \left(\delta + 1\right)\right)\right) - 2^{-(\alpha-1)}\right) - \left(\left(k - \rho\right) \left(2^{-\beta} \delta\right)\right) \geq 0
+    \end{equation}
+\end{itemize}
+With $\rho=1$:
+\begin{itemize}
+  \item For $k = 1$: $\min\left(U_{0,\mathrm{trunc}}\right) - \max\left(L_{1,\mathrm{trunc}}\right) = 2^{-\beta}\delta - 2^{-(\alpha-1)} \geq 0$.
+  \item For $k = 0$: $\min\left(U_{-1,\mathrm{trunc}}\right) - \max\left(L_{0,\mathrm{trunc}}\right) = 2^{-\beta}\delta - 2^{-(\alpha-1)} \geq 0$.
+\end{itemize}
+The condition $2^{-\beta}\delta \geq 2^{-(\alpha-1)}$ must hold for the worst case (smallest $\delta$).
+Since $D \in [1/2, 1)$, $\delta = \Int(2^\beta D) \in [2^{\beta-1}, 2^\beta-1]$.
+The minimum $\delta$ is $2^{\beta-1}$.
+$2^{-\beta} (2^{\beta-1}) \geq 2^{-(\alpha-1)} \implies 1/2 \geq 2^{-(\alpha-1)}$.
+This implies $\alpha-1 \geq 1$, so we need $\alpha \geq 2$.
+Choosing $\alpha = 2, \beta = 2$:
+\begin{align*}
+  \tau_j &= \Int\left(4 \cdot t_{j,2\ldots0}.t_{j,-1}t_{j,-2}\right) \in \left\{-16, \dots, 15\right\} && \left(\tau_j \leq 8 R_j < \tau_j + 2\right) \\
+  \delta &= \Int\left(4 \cdot 0.1d_{j,-2}\right) \in \left\{2, 3\right\} && \left(\delta \leq 4 D < \delta + 1\right)
+\end{align*}
+The final selection logic is a table mapping $(\tau_j, \delta)$ to $q_{j+1}$.
+This table is derived from the selection intervals, adjusted for truncation error.
+\begin{equation}
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 0 \leq \tau_j < 2 \left(\delta + 1\right) \\
+    0  & \text{if } -\delta \leq \tau_j \leq \delta - 2 \\
+    -1 & \text{if } -2 \left(\delta + 1\right) - 2 < \tau_j \leq -2
+  \end{cases}
+\end{equation}
+
+\subsubsection{Negative Divisor}
+For $D \in [-1, -1/2)$, with $\rho=1$, the selection intervals from \eqref{eq:div_selection_interval_neg} are:
+\begin{equation}
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 2 D \leq 2 R_j \leq 0 \\
+    0  & \text{if } D \leq 2 R_j \leq -D \\
+    -1 & \text{if } 0 \leq 2 R_j \leq -2 D
+  \end{cases}
+\end{equation}
+The implementation follows the same principles.
+The residual $2 R_j = r_{j,2\ldots0}.r_{j,-1\ldots-\infty}$ is kept in carry-save form $Y_j+Z_j$, and a truncated estimate $t_{j,2\ldots0}.t_{j,-1\ldots-\alpha}$ is computed.
+\begin{equation}
+  0 \leq 2 R_j - t_{j,2\ldots0}.t_{j,-1\ldots-\alpha} < 2^{-(\alpha-1)}
+\end{equation}
+The integer estimates are defined as:
+\begin{align*}
+  \tau_j &= \Int\left(2^\alpha \cdot t_{j,2\ldots0}.t_{j,-1\ldots-\alpha}\right) \in \left\{-2^{\alpha+2}, \dots, 2^{\alpha+2}-1\right\} && \left(\tau_j \leq 2^{\alpha+1} R_j < \tau_j + 2\right) \\
+  \delta &= \Int\left(2^\beta \cdot 1.0d_{j,-2\ldots-\beta}\right) \in \left\{-2^\beta, \dots, -2^{\beta-1}-1\right\} && \left(\delta \leq 2^\beta D < \delta + 1\right)
+\end{align*}
+The continuity condition is now $\min\left(U_{k,\mathrm{trunc}}\right) - \max\left(L_{k-1,\mathrm{trunc}}\right) \geq 0$, where $U_k = (k-\rho)D$ and $L_k = (k+\rho)D$.
+\begin{equation}
+  \min\left(U_{k,\mathrm{trunc}}\right) = \min\left(\left(k - \rho\right) D\right) - 2^{-(\alpha-1)}
+\end{equation}
+\begin{equation}
+  \max\left(L_{k-1,\mathrm{trunc}}\right) = \max\left(\left(k - 1 + \rho\right) D\right)
+\end{equation}
+The bounds on products of negative numbers must be handled carefully.
+\begin{itemize}
+  \item For $k \geq 1$ ($k - \rho \geq 0$ and $k - 1 + \rho \geq 0$):
+    \begin{equation}
+      \left(\left(\left(k - \rho\right) \left(2^{-\beta} \delta\right)\right) - 2^{-(\alpha-1)}\right) - \left(\left(k - 1 + \rho\right) \left(2^{-\beta} \left(\delta + 1\right)\right)\right) \geq 0
+    \end{equation}
+  \item For $k \leq 0$ ($k - \rho \leq 0$ and $k - 1 + \rho \leq 0$):
+    \begin{equation}
+      \left(\left(\left(k - \rho\right) \left(2^{-\beta} \left(\delta + 1\right)\right)\right) - 2^{-(\alpha-1)}\right) - \left(\left(k - 1 + \rho\right) \left(2^{-\beta} \delta\right)\right) \geq 0
+    \end{equation}
+\end{itemize}
+With $\rho=1$:
+\begin{itemize}
+  \item For $k = 1$: $\min\left(U_{1,\mathrm{trunc}}\right) - \max\left(L_{0,\mathrm{trunc}}\right) = -2^{-\beta} \left(\delta + 1\right) - 2^{-(\alpha-1)} \geq 0$.
+  \item For $k = 0$: $\min\left(U_{0,\mathrm{trunc}}\right) - \max\left(L_{-1,\mathrm{trunc}}\right) = -2^{-\beta} \left(\delta + 1\right) - 2^{-(\alpha-1)} \geq 0$.
+\end{itemize}
+The condition $-2^{-\beta}(\delta+1) \geq 2^{-(\alpha-1)}$ must hold for the worst case (smallest $-(\delta+1)$).
+Since $D \in [-1, -1/2)$, $\delta = \Int(2^\beta D) \in [-2^\beta, -2^{\beta-1}-1]$.
+The minimum $-(\delta+1)$ is $2^{\beta-1}$.
+$2^{-\beta} (2^{\beta-1}) \geq 2^{-(\alpha-1)} \implies 1/2 \geq 2^{-(\alpha-1)}$.
+This implies $\alpha-1 \geq 1$, so we need $\alpha \geq 2$.
+Choosing $\alpha = 2, \beta = 2$:
+\begin{align*}
+  \tau_j &= \Int\left(4 \cdot t_{j,2\ldots0}.t_{j,-1}t_{j,-2}\right) \in \left\{-16, \dots, 15\right\} && \left(\tau_j \leq 8 R_j < \tau_j + 2\right) \\
+  \delta &= \Int\left(4 \cdot 1.0d_{j,-2}\right) \in \left\{-4, -3\right\} && \left(\delta \leq 4 D < \delta + 1\right)
+\end{align*}
+The resulting selection logic is:
+\begin{equation}
+  q_{j+1} =
+  \begin{cases}
+    1  & \text{if } 2 \delta - 2 < \tau_j \leq -2 \\
+    0  & \text{if } \delta + 1 \leq \tau_j \leq -\left(\delta + 1\right) - 2 \\
+    -1 & \text{if } 0 \leq \tau_j \leq -2 \delta
+  \end{cases}
+\end{equation}
+
+\subsection{Example: Radix-4 SRT Division}
+\label{ssec:div_radix4}
+For Radix-4 ($B=4$), a common choice for the digit set is $\{-2, -1, 0, 1, 2\}$, so $a=2$.
+The redundancy factor is less than one:
+\begin{equation}
+  \rho = \frac{a}{B-1} = \frac{2}{4-1} = \frac{2}{3}
+\end{equation}
+
+\subsubsection{Positive Divisor}
+The selection intervals for $q_{j+1} \in \{-2, \dots, 2\}$ are given by \eqref{eq:div_selection_interval_pos}:
+\begin{equation}
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{4}{3} D \leq 4 R_j \leq \frac{8}{3} D \\
+    1  & \text{if } \frac{1}{3} D \leq 4 R_j \leq \frac{5}{3} D \\
+    0  & \text{if } -\frac{2}{3} D \leq 4 R_j \leq \frac{2}{3} D \\
+    -1 & \text{if } -\frac{5}{3} D \leq 4 R_j \leq -\frac{1}{3} D \\
+    -2 & \text{if } -\frac{8}{3} D \leq 4 R_j \leq -\frac{4}{3} D
+  \end{cases}
+\end{equation}
+The implementation uses truncated estimates of the shifted residual $4R_j$ and the divisor $D$.
+\begin{equation}
+  4 R_j = r_{j,2\ldots0}.r_{j,-1\ldots-\infty} = (Y_j+Z_j)_{2\ldots0}.(Y_j+Z_j)_{-1\ldots-\infty}
+\end{equation}
+\begin{equation}
+  t_{j,2\ldots0}.t_{j,-1\ldots-\alpha} = y_{j,2\ldots0}.y_{j,-1\ldots-\alpha} + z_{j,2\ldots0}.z_{j,-1\ldots-\alpha}
+\end{equation}
+\begin{equation}
+  0 \leq 4 R_j - t_{j,2\ldots0}.t_{j,-1\ldots-\alpha} < 2^{-(\alpha-1)}
+\end{equation}
+The integer estimates are:
+\begin{align*}
+  \tau_j &= \Int\left(2^\alpha \cdot t_{j,2\ldots0}.t_{j,-1\ldots-\alpha}\right) \in \left\{-2^{\alpha+2}, \dots, 2^{\alpha+2}-1\right\} && \left(\tau_j \leq 2^{\alpha+2} R_j < \tau_j + 2\right) \\
+  \delta &= \Int\left(2^\beta \cdot 0.1d_{j,-2\ldots-\beta}\right) \in \left\{2^{\beta-1}, \dots, 2^\beta-1\right\} && \left(\delta \leq 2^\beta D < \delta + 1\right)
+\end{align*}
+The continuity condition $\min\left(U_{k-1,\mathrm{trunc}}\right) - \max\left(L_{k,\mathrm{trunc}}\right) \geq 0$ must hold for $k \in \{-1, 0, 1, 2\}$.
+\begin{itemize}
+  \item For $k \geq 1$ ($k - 1 + \rho \geq 0$ and $k - \rho \geq 0$):
+    \begin{equation}
+      \left(\left(\left(k - 1 + \rho\right) \left(2^{-\beta} \delta\right)\right) - 2^{-(\alpha-1)}\right) - \left(\left(k - \rho\right) \left(2^{-\beta} \left(\delta + 1\right)\right)\right) \geq 0
+    \end{equation}
+  \item For $k \leq 0$ ($k - 1 + \rho \leq 0$ and $k - \rho \leq 0$):
+    \begin{equation}
+      \left(\left(\left(k - 1 + \rho\right) \left(2^{-\beta} \left(\delta + 1\right)\right)\right) - 2^{-(\alpha-1)}\right) - \left(\left(k - \rho\right) \left(2^{-\beta} \delta\right)\right) \geq 0
+    \end{equation}
+\end{itemize}
+Substituting $\rho=2/3$ and simplifying gives the conditions:
+\begin{itemize}
+  \item For $k = 2$: $\min\left(U_{1,\mathrm{trunc}}\right) - \max\left(L_{2,\mathrm{trunc}}\right) = \frac{1}{3} \cdot 2^{-\beta} \delta - \frac{4}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} \geq 0$.
+  \item For $k = 1$: $\min\left(U_{0,\mathrm{trunc}}\right) - \max\left(L_{1,\mathrm{trunc}}\right) = \frac{1}{3} \cdot 2^{-\beta} \delta - \frac{1}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} \geq 0$.
+  \item For $k = 0$: $\min\left(U_{-1,\mathrm{trunc}}\right) - \max\left(L_{0,\mathrm{trunc}}\right) = \frac{1}{3} \cdot 2^{-\beta} \delta - \frac{1}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} \geq 0$.
+  \item For $k = -1$: $\min\left(U_{-2,\mathrm{trunc}}\right) - \max\left(L_{-1,\mathrm{trunc}}\right) = \frac{1}{3} \cdot 2^{-\beta} \delta - \frac{4}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} \geq 0$.
+\end{itemize}
+The most restrictive conditions are for $k=2$ and $k=-1$.
+We need to find $\alpha, \beta$ that satisfy these for the smallest $\delta$.
+A common choice is $\alpha = 5, \beta = 4$.
+\begin{align*}
+  \tau_j &= \Int\left(32 \cdot t_{j,2\ldots0}.t_{j,-1\ldots-5}\right) \in \left\{-128, \dots, 127\right\} && \left(\tau_j \leq 128 R_j < \tau_j + 2\right) \\
+  \delta &= \Int\left(16 \cdot 0.1d_{j,-2\ldots-4}\right) \in \left\{8, \dots, 15\right\} && \left(\delta \leq 16 D < \delta + 1\right)
+\end{align*}
+The selection logic is a more complex table, derived from the selection intervals and precision analysis.
+\begin{equation}
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{8}{3} \left(\delta + 1\right) \leq \tau_j < \frac{16}{3} \left(\delta + 1\right) \\
+    1  & \text{if } \frac{2}{3} \left(\delta + 1\right) \leq \tau_j \leq \frac{10}{3} \delta - 2 \\
+    0  & \text{if } -\frac{4}{3} \delta \leq \tau_j \leq \frac{4}{3} \delta - 2 \\
+    -1 & \text{if } -\frac{10}{3} \delta \leq \tau_j \leq -\frac{2}{3} \left(\delta + 1\right) - 2 \\
+    -2 & \text{if } -\frac{16}{3} \left(\delta + 1\right) - 2 < \tau_j \leq -\frac{8}{3} \left(\delta + 1\right) - 2
+  \end{cases}
+\end{equation}
+
+\subsubsection{Negative Divisor}
+For a negative divisor $D \in [-1, -1/2)$, the selection intervals are reversed:
+\begin{equation}
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{8}{3} D \leq 4 R_j \leq \frac{4}{3} D \\
+    1  & \text{if } \frac{5}{3} D \leq 4 R_j \leq \frac{1}{3} D \\
+    0  & \text{if } \frac{2}{3} D \leq 4 R_j \leq -\frac{2}{3} D \\
+    -1 & \text{if } -\frac{1}{3} D \leq 4 R_j \leq -\frac{5}{3} D \\
+    -2 & \text{if } -\frac{4}{3} D \leq 4 R_j \leq -\frac{8}{3} D
+  \end{cases}
+\end{equation}
+The analysis proceeds similarly, using the continuity condition $\min\left(U_{k,\mathrm{trunc}}\right) - \max\left(L_{k-1,\mathrm{trunc}}\right) \geq 0$.
+\begin{align*}
+  \tau_j &= \Int\left(2^\alpha \cdot t_{j,2\ldots0}.t_{j,-1\ldots-\alpha}\right) \in \left\{-2^{\alpha+2}, \dots, 2^{\alpha+2}-1\right\} && \left(\tau_j \leq 2^{\alpha+2} R_j < \tau_j + 2\right) \\
+  \delta &= \Int\left(2^\beta \cdot 1.0d_{j,-2\ldots-\beta}\right) \in \left\{-2^\beta, \dots, -2^{\beta-1}-1\right\} && \left(\delta \leq 2^\beta D < \delta + 1\right)
+\end{align*}
+The continuity conditions with $\rho=2/3$ become:
+\begin{itemize}
+  \item For $k = 2$: $\min\left(U_{2,\mathrm{trunc}}\right) - \max\left(L_{1,\mathrm{trunc}}\right) = -\frac{1}{3} \cdot 2^{-\beta} \left(\delta + 1\right) - \frac{4}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} \geq 0$.
+  \item For $k = 1$: $\min\left(U_{1,\mathrm{trunc}}\right) - \max\left(L_{0,\mathrm{trunc}}\right) = -\frac{1}{3} \cdot 2^{-\beta} \left(\delta + 1\right) - \frac{1}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} \geq 0$.
+  \item For $k = 0$: $\min\left(U_{0,\mathrm{trunc}}\right) - \max\left(L_{-1,\mathrm{trunc}}\right) = -\frac{1}{3} \cdot 2^{-\beta} \left(\delta + 1\right) - \frac{1}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} \geq 0$.
+  \item For $k = -1$: $\min\left(U_{-1,\mathrm{trunc}}\right) - \max\left(L_{-2,\mathrm{trunc}}\right) = -\frac{1}{3} \cdot 2^{-\beta} \left(\delta + 1\right) - \frac{4}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} \geq 0$.
+\end{itemize}
+These conditions can be satisfied for appropriate $\alpha, \beta$.
+With $\alpha = 5, \beta = 4$:
+\begin{align*}
+  \tau_j &= \Int\left(32 \cdot t_{j,2\ldots0}.t_{j,-1\ldots-5}\right) \in \left\{-128, \dots, 127\right\} && \left(\tau_j \leq 128 R_j < \tau_j + 2\right) \\
+  \delta &= \Int\left(16 \cdot 1.0d_{j,-2\ldots-4}\right) \in \left\{-16, \dots, -9\right\} && \left(\delta \leq 16 D < \delta + 1\right)
+\end{align*}
+The corresponding selection logic is:
+\begin{equation}
+  q_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{16}{3} \delta - 2 < \tau_j \leq \frac{8}{3} \delta - 2 \\
+    1  & \text{if } \frac{10}{3} \left(\delta + 1\right) \leq \tau_j \leq \frac{2}{3} \delta - 2 \\
+    0  & \text{if } \frac{4}{3} \left(\delta + 1\right) \leq \tau_j \leq -\frac{4}{3} \left(\delta + 1\right) - 2 \\
+    -1 & \text{if } -\frac{2}{3} \delta \leq \tau_j \leq -\frac{10}{3} \left(\delta + 1\right) - 2 \\
+    -2 & \text{if } -\frac{8}{3} \delta \leq \tau_j \leq -\frac{16}{3} \delta
+  \end{cases}
+\end{equation}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth, height=3.5\textwidth, keepaspectratio=true]{../figures/division/radix2_qds_basic_quadrants_1_2_3_4.pdf}
+    \caption{Radix-2 Basic QDS}
+    \label{fig:div_radix2_basic}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth, height=3.5\textwidth, keepaspectratio=true]{../figures/division/radix4_qds_basic_quadrants_1_2_3_4.pdf}
+    \caption{Radix-4 Basic QDS}
+    \label{fig:div_radix4_basic}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth, height=3.5\textwidth, keepaspectratio=true]{../figures/division/radix4_qds_optimized_quadrants_1_2_3_4.pdf}
+    \caption{Radix-4 Optimized QDS}
+    \label{fig:div_radix4_optimized}
+  \end{subfigure}
+  \caption{Selection regions for the Quotient Digit Selector (QDS). The y-axis is the truncated residual estimate $\tau_j$ and the x-axis is the truncated divisor estimate $\delta$. The regions show which quotient digit $q_{j+1}$ is selected. (a) and (b) show the initial overlapping boundaries (`basic') derived directly from the theory. (c) shows the final non-overlapping boundaries (`optimized') used for implementation.}
+  \label{fig:div_qds}
+\end{figure}
+
+\section{Square Root by Digit Recurrence}
+\label{sec:sqrt}
+The digit recurrence methodology can be adapted for square root extraction.
+The fundamental relationship is:
+\begin{equation}
+  X = S^2 + R
+\end{equation}
+where $X$ is the radicand, $S$ is the square root, and $R$ is the final remainder.
+We again use normalized operands:
+\begin{align*}
+  X &\in \left[\frac{1}{4}, 1\right) && \text{(Radicand)} \\
+  S &\in \left[\sqrt{\frac{1}{4}}, \sqrt{1}\right) = \left[\frac{1}{2}, 1\right) && \text{(Square Root)}
+\end{align*}
+
+The root $S$ is computed iteratively for $j=0,1,\dots,n-1$.
+Let $S_j$ be the root estimate after $j$ digits ($s_1, \dots, s_j$) have been determined.
+\begin{equation}
+  \label{eq:sqrt_root_recurrence}
+  S_{j+1} = S_j + s_{j+1} B^{-(j+1)}
+\end{equation}
+Unfolding the recurrence:
+\begin{equation}
+  \text{At step } j, \quad S_{j+1} = S_0 + \sum_{i=0}^{j} s_{i+1} B^{-(i+1)}
+\end{equation}
+The final root after $n$ iterations is:
+\begin{equation}
+  \text{At step } j=n-1, \quad S_n = S_0 + \sum_{i=0}^{n-1} s_{i+1} B^{-(i+1)} = S
+\end{equation}
+The error at step $j$ is $\varepsilon_{j+1} = \sqrt{X} - S_{j+1}$.
+As with division, this error is bounded by the maximum possible value of the remaining digits:
+\begin{equation}
+  \varepsilon_{j+1} = \sum_{i=j+1}^{\infty} s_{i+1} B^{-(i+1)}
+\end{equation}
+\begin{equation}
+  \left| \sum_{i=j+1}^{\infty} s_{i+1} B^{-(i+1)} \right| \leq \sum_{i=j+1}^{\infty} a B^{-(i+1)} = a B^{-(j+2)} \sum_{k=0}^{\infty} B^{-k} = a B^{-(j+2)} \frac{1}{1-B^{-1}} = \frac{a}{B-1} B^{-(j+1)}
+\end{equation}
+This gives the same error bound form as in division:
+\begin{equation}
+  \left| \varepsilon_{j+1} \right| \leq \rho B^{-(j+1)} \implies \left| \sqrt{X} - S_{j+1} \right| \leq \rho B^{-(j+1)}
+\end{equation}
+To find the containment condition, we rearrange and square the inequality:
+\begin{equation}
+  S_{j+1} - \rho B^{-(j+1)} \leq \sqrt{X} \leq S_{j+1} + \rho B^{-(j+1)}
+\end{equation}
+\begin{equation}
+  S_{j+1}^2 - 2 S_{j+1} \rho B^{-(j+1)} + \rho^2 B^{-2(j+1)} \leq X \leq S_{j+1}^2 + 2 S_{j+1} \rho B^{-(j+1)} + \rho^2 B^{-2(j+1)}
+\end{equation}
+Isolating the term $X - S_{j+1}^2$:
+\begin{equation}
+  \rho^2 B^{-2(j+1)} - 2 S_{j+1} \rho B^{-(j+1)} \leq X - S_{j+1}^2 \leq \rho^2 B^{-2(j+1)} + 2 S_{j+1} \rho B^{-(j+1)}
+\end{equation}
+We define the scaled residual $R_{j+1} = B^{j+1} \left(X - S_{j+1}^2\right)$.
+Multiplying by $B^{j+1}$:
+\begin{equation}
+  \rho^2 B^{-(j+1)} - 2 \rho S_{j+1} \leq B^{j+1} \left(X - S_{j+1}^2\right) \leq \rho^2 B^{-(j+1)} + 2 \rho S_{j+1}
+\end{equation}
+This gives the containment condition for the square root residual:
+\begin{equation}
+  \label{eq:sqrt_containment}
+  \rho^2 B^{-(j+1)} - 2 \rho S_{j+1} \leq R_{j+1} \leq \rho^2 B^{-(j+1)} + 2 \rho S_{j+1}
+\end{equation}
+The final unscaled remainder $R$ is related to the final residual $R_n$ by:
+\begin{equation}
+  \text{At step } j=n-1, \quad R_n = B^n \left(X - S_n^2\right) = B^n R
+\end{equation}
+Next, we derive the residual recurrence relation:
+\begin{align*}
+  R_{j+1} &= B^{j+1} \left(X - S_{j+1}^2\right) \\
+  &= B^{j+1} \left(X - \left(S_j + s_{j+1} B^{-(j+1)}\right)^2\right) \\
+  &= B^{j+1} \left(X - \left(S_j^2 + 2 S_j s_{j+1} B^{-(j+1)} + s_{j+1}^2 B^{-2(j+1)}\right)\right) \\
+  &= B^{j+1} \left(X - S_j^2\right) - B^{j+1} \left(2 S_j s_{j+1} B^{-(j+1)} + s_{j+1}^2 B^{-2(j+1)}\right) \\
+  &= B \left(B^j \left(X - S_j^2\right)\right) - \left(2 S_j s_{j+1} + s_{j+1}^2 B^{-(j+1)}\right) \\
+  &= B R_j - s_{j+1} \left(2 S_j + s_{j+1} B^{-(j+1)}\right)
+\end{align*}
+The central recurrence for square root is:
+\begin{equation}
+  \label{eq:sqrt_residual_recurrence}
+  R_{j+1} = B R_j - s_{j+1} \left(2 S_j + s_{j+1} B^{-(j+1)}\right)
+\end{equation}
+To find the selection intervals, we substitute this recurrence into the containment condition \eqref{eq:sqrt_containment}:
+\begin{equation}
+  \rho^2 B^{-(j+1)} - 2 \rho S_{j+1} \leq B R_j - s_{j+1} \left(2 S_j + s_{j+1} B^{-(j+1)}\right) \leq \rho^2 B^{-(j+1)} + 2 \rho S_{j+1}
+\end{equation}
+Substituting $S_{j+1} = S_j + s_{j+1}B^{-(j+1)}$ into the bounds:
+\begin{equation}
+  \rho^2 B^{-(j+1)} - 2 \rho \left(S_j + s_{j+1} B^{-(j+1)}\right) \leq B R_j - s_{j+1} \left(2 S_j + s_{j+1} B^{-(j+1)}\right) \leq \rho^2 B^{-(j+1)} + 2 \rho \left(S_j + s_{j+1} B^{-(j+1)}\right)
+\end{equation}
+Adding $s_{j+1} \left(2 S_j + s_{j+1} B^{-(j+1)}\right)$ to all parts and simplifying leads to the selection interval for $B R_j$:
+\begin{equation}
+  \label{eq:sqrt_selection_interval}
+  2 \left(s_{j+1} - \rho\right) S_j + \left(s_{j+1} - \rho\right)^2 B^{-(j+1)} \leq B R_j \leq 2 \left(s_{j+1} + \rho\right) S_j + \left(s_{j+1} + \rho\right)^2 B^{-(j+1)}
+\end{equation}
+Unlike division, these bounds depend on the partial result $S_j$, which changes at every step.
+This makes the digit selection logic more complex.
+
+\subsection{Initialization}
+\label{ssec:sqrt_init}
+The radicand is assumed to be in the range $X \in \left[\frac{1}{4}, 1\right)$, which gives a root $S \in \left[\frac{1}{2}, 1\right)$.
+A common initialization is to set the initial root estimate $S_0 = 1$.
+This defines the initial residual:
+\begin{equation}
+  R_0 = X - S_0^2 = X - 1 \in \left[-\frac{3}{4}, 0\right)
+\end{equation}
+This initial residual must satisfy the containment condition from \eqref{eq:sqrt_containment} for $j=0$:
+\begin{equation}
+  \rho^2 - 2 \rho S_0 \leq R_0 \leq \rho^2 + 2 \rho S_0
+\end{equation}
+Substituting the range of $R_0$ and the value of $S_0=1$:
+\begin{equation}
+  \rho^2 - 2 \rho \leq -\frac{3}{4} \leq R_0 < 0 \leq \rho^2 + 2 \rho
+\end{equation}
+This inequality holds for $\rho \in \left(\frac{1}{2}, 1\right]$.
+
+\subsection{Example: Radix-2 SRT Square Root}
+\label{ssec:sqrt_radix2}
+We use $B=2$, $a=1$, so $\rho = 1$.
+The digit set for $s_{j+1}$ is $\{-1, 0, 1\}$.
+The selection intervals from \eqref{eq:sqrt_selection_interval} become:
+\begin{equation}
+  s_{j+1} =
+  \begin{cases}
+    1  & \text{if } 0 \leq 2 R_j \leq 4 S_j + 4 \cdot 2^{-(j+1)} \\
+    0  & \text{if } -2 S_j + 2^{-(j+1)} \leq 2 R_j \leq 2 S_j + 2^{-(j+1)} \\
+    -1 & \text{if } -4 S_j + 4 \cdot 2^{-(j+1)} \leq 2 R_j \leq 0
+  \end{cases}
+\end{equation}
+The selection depends on both the shifted residual $2R_j$ and the partial root $S_j$.
+We need truncated estimates of both.
+The residual $2 R_j = r_{j,3\ldots0}.r_{j,-1\ldots-\infty}$ is handled as before:
+\begin{equation}
+  0 \leq 2 R_j - t_{j,3\ldots0}.t_{j,-1\ldots-\alpha} < 2^{-(\alpha-1)}
+\end{equation}
+The integer estimates are:
+\begin{align*}
+  \tau_j &= \Int\left(2^\alpha \cdot t_{j,3\ldots0}.t_{j,-1\ldots-\alpha}\right) \in \left\{-2^{\alpha+3}, \dots, 2^{\alpha+3}-1\right\} && \left(\tau_j \leq 2^{\alpha+1} R_j < \tau_j + 2\right) \\
+  \sigma_j &= \Int\left(2^\beta \cdot 0.1s_{j,-2\ldots-\beta}\right) \in \left\{2^{\beta-1}, \dots, 2^\beta-1\right\} && \left(\sigma_j \leq 2^\beta S_j \leq \sigma_j + 1 - 2^\beta \mathrm{ulp}\right)
+\end{align*}
+Note that the range of $S_j$ is $[1/2, 1)$, and its ulp (unit in the last place) is $2^{-j}$.
+So $\sigma_j \leq 2^\beta S_j \leq \sigma_j + 1 - 2^\beta 2^{-j}$.
+The continuity condition analysis is more complex.
+Let $L_k(S_j)$ and $U_k(S_j)$ be the lower and upper bounds from \eqref{eq:sqrt_selection_interval}.
+\begin{equation}
+  \min\left(U_{k-1,\mathrm{trunc}}\right) = \min\left(2 \left(k - 1 + \rho\right) S_j + \left(k - 1 + \rho\right)^2 B^{-(j+1)}\right) - 2^{-(\alpha-1)}
+\end{equation}
+\begin{equation}
+  \max\left(L_{k,\mathrm{trunc}}\right) = \max\left(2 \left(k - \rho\right) S_j + \left(k - \rho\right)^2 B^{-(j+1)}\right)
+\end{equation}
+The condition is $\min\left(U_{k-1,\mathrm{trunc}}\right) - \max\left(L_{k,\mathrm{trunc}}\right) \geq 0$.
+\begin{itemize}
+  \item For $k \geq 1$:
+    \begin{equation}
+      \left(\left(2 \left(k - 1 + \rho\right) \left(2^{-\beta} \sigma_j\right)\right) - 2^{-(\alpha-1)}\right) - \left(2 \left(k - \rho\right) \left(2^{-\beta} \left(\sigma_j + 1\right)\right)\right) \geq 0
+    \end{equation}
+  \item For $k \leq 0$:
+    \begin{equation}
+      \left(\left(2 \left(k - 1 + \rho\right) \left(2^{-\beta} \left(\sigma_j + 1\right)\right)\right) - 2^{-(\alpha-1)}\right) - \left(2 \left(k - \rho\right) \left(2^{-\beta} \sigma_j\right) + \left(k - \rho\right)^2 B^{-(j+1)}\right) \geq 0
+    \end{equation}
+\end{itemize}
+With $\rho=1, B=2$:
+\begin{itemize}
+  \item For $k = 1$: $\min\left(U_{0,\mathrm{trunc}}\right) - \max\left(L_{1,\mathrm{trunc}}\right) = 2 \cdot 2^{-\beta} \sigma_j - 2^{-(\alpha-1)} \geq 0$. This holds for $\alpha \geq 1$ since $\sigma_j \geq 2^{\beta-1}$.
+  \item For $k = 0$: $\min\left(U_{-1,\mathrm{trunc}}\right) - \max\left(L_{0,\mathrm{trunc}}\right) = 2 \cdot 2^{-\beta} \sigma_j - 2^{-(\alpha-1)} - B^{-(j+1)} \geq 0$.
+\end{itemize}
+The condition for $k=0$ is more restrictive due to the $-B^{-(j+1)}$ term.
+For the worst case (smallest $\sigma_j=2^{\beta-1}$), we need $2 \cdot 2^{-\beta} (2^{\beta-1}) - 2^{-(\alpha-1)} - 2^{-(j+1)} = 1 - 2^{-(\alpha-1)} - 2^{-(j+1)} \geq 0$.
+This requires $\alpha \geq 2$.
+Choosing $\alpha = 2, \beta = 2$:
+\begin{align*}
+  \tau_j &= \Int\left(4 \cdot t_{j,3\ldots0}.t_{j,-1}t_{j,-2}\right) \in \left\{-32, \dots, 31\right\} && \left(\tau_j \leq 8 R_j < \tau_j + 2\right) \\
+  \sigma_j &= \Int\left(4 \cdot 0.1s_{j,-2}\right) \in \left\{2, 3\right\} && \left(\sigma_j \leq 4 S_j \leq \sigma_j + 1 - 4 \cdot 2^{-j}\right)
+\end{align*}
+The selection logic becomes:
+\begin{equation}
+  s_{j+1} =
+  \begin{cases}
+    1  & \text{if } 0 \leq \tau_j < 4 \left(\sigma_j + 1\right) \\
+    0  & \text{if } -2 \left(\sigma_j - 1\right) \leq \tau_j \leq 2 \sigma_j - 2 \\
+    -1 & \text{if } -4 \left(\sigma_j + 1\right) - 2 < \tau_j \leq -2
+  \end{cases}
+\end{equation}
+
+\subsection{Example: Radix-4 SRT Square Root}
+\label{ssec:sqrt_radix4}
+We use $B=4$, $a=2$, so $\rho = 2/3$.
+The digit set for $s_{j+1}$ is $\{-2, \dots, 2\}$.
+The selection intervals from \eqref{eq:sqrt_selection_interval} are:
+\begin{equation}
+  s_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{8}{3} S_j + \frac{16}{9} 4^{-(j+1)} \leq 4 R_j \leq \frac{16}{3} S_j + \frac{64}{9} 4^{-(j+1)} \\
+    1  & \text{if } \frac{2}{3} S_j + \frac{1}{9} 4^{-(j+1)} \leq 4 R_j \leq \frac{10}{3} S_j + \frac{25}{9} 4^{-(j+1)} \\
+    0  & \text{if } -\frac{4}{3} S_j + \frac{4}{9} 4^{-(j+1)} \leq 4 R_j \leq \frac{4}{3} S_j + \frac{4}{9} 4^{-(j+1)} \\
+    -1 & \text{if } -\frac{10}{3} S_j + \frac{25}{9} 4^{-(j+1)} \leq 4 R_j \leq -\frac{2}{3} S_j + \frac{1}{9} 4^{-(j+1)} \\
+    -2 & \text{if } -\frac{16}{3} S_j + \frac{64}{9} 4^{-(j+1)} \leq 4 R_j \leq -\frac{8}{3} S_j + \frac{16}{9} 4^{-(j+1)}
+  \end{cases}
+\end{equation}
+The integer estimates are:
+\begin{align*}
+  \tau_j &= \Int\left(2^\alpha \cdot t_{j,3\ldots0}.t_{j,-1\ldots-\alpha}\right) \in \left\{-2^{\alpha+3}, \dots, 2^{\alpha+3}-1\right\} && \left(\tau_j \leq 2^{\alpha+2} R_j < \tau_j + 2\right) \\
+  \sigma_j &= \Int\left(2^\beta \cdot 0.1s_{j,-2\ldots-\beta}\right) \in \left\{2^{\beta-1}, \dots, 2^\beta-1\right\} && \left(\sigma_j \leq 2^\beta S_j \leq \sigma_j + 1 - 2^\beta \mathrm{ulp} = \sigma_j + 1 - 2^\beta 4^{-j}\right)
+\end{align*}
+The continuity analysis follows the same formulas as Radix-2, but with $\rho=2/3, B=4$.
+\begin{itemize}
+  \item For $k = 2$: $\min\left(U_{1,\mathrm{trunc}}\right) - \max\left(L_{2,\mathrm{trunc}}\right) = \frac{2}{3} \cdot 2^{-\beta} \sigma_j - \frac{8}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} \geq 0$.
+  \item For $k = 1$: $\min\left(U_{0,\mathrm{trunc}}\right) - \max\left(L_{1,\mathrm{trunc}}\right) = \frac{2}{3} \cdot 2^{-\beta} \sigma_j - \frac{2}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} \geq 0$.
+  \item For $k = 0$: $\min\left(U_{-1,\mathrm{trunc}}\right) - \max\left(L_{0,\mathrm{trunc}}\right) = \frac{2}{3} \cdot 2^{-\beta} \sigma_j - \frac{2}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} - \frac{4}{9} B^{-(j+1)} \geq 0$.
+  \item For $k = -1$: $\min\left(U_{-2,\mathrm{trunc}}\right) - \max\left(L_{-1,\mathrm{trunc}}\right) = \frac{2}{3} \cdot 2^{-\beta} \sigma_j - \frac{8}{3} \cdot 2^{-\beta} - 2^{-(\alpha-1)} - \frac{25}{9} B^{-(j+1)} \geq 0$.
+\end{itemize}
+A significant complication arises: the term $B^{-(j+1)}$ makes the overlap dependent on the iteration number $j$.
+This term, which comes from the $(s_{j+1} \pm \rho)^2$ part of the bounds, is most problematic for negative choices of $k$.
+The most restrictive case is for $k = -1$.
+For small $j$, the term $\frac{25}{9} B^{-(j+1)}$ is large and negative, making the inequality difficult to satisfy.
+For example, for $\alpha = 4, \beta = 4$, the condition for $k = -1$ becomes:
+\[
+  \underbrace{\frac{2}{3} \cdot 2^{-4} \sigma_j - \frac{8}{3} \cdot 2^{-4} - 2^{-3}}_{\text{Constant}} - \underbrace{\frac{25}{9} 4^{-(j+1)}}_{\text{Decreases with } j} \geq 0.
+\]
+This inequality only holds for $j \geq j_0$.
+With $\alpha = 4, \beta = 4$ and worst-case $\sigma_j=8$, the constant part is $\frac{16}{48} - \frac{8}{48} - \frac{6}{48} = \frac{2}{48} = \frac{1}{24}$.
+The inequality is $\frac{1}{24} - \frac{25}{9} 4^{-(j+1)} \geq 0$.
+This is met for $j \geq 3$.
+This means the first few iterations ($j=0, 1, 2$) may require a more precise selection mechanism or a special startup sequence.
+For $j \geq 3$, we can use the parameters $\alpha = 4, \beta = 4$:
+\begin{align*}
+  \tau_j &= \Int\left(16 \cdot t_{j,3\ldots0}.t_{j,-1\ldots-4}\right) \in \left\{-128, \dots, 127\right\} && \left(\tau_j \leq 64 R_j < \tau_j + 2\right) \\
+  \sigma_j &= \Int\left(16 \cdot 0.1s_{j,-2\ldots-4}\right) \in \left\{8, \dots, 15\right\} && \left(\sigma_j \leq 16 S_j \leq \sigma_j + 1 - 16 \cdot 4^{-j}\right)
+\end{align*}
+The selection logic for $j \geq 3$ is:
+\begin{equation}
+  s_{j+1} =
+  \begin{cases}
+    2  & \text{if } \frac{8}{3} \left(\sigma_j + 1\right) \leq \tau_j < \frac{16}{3} \left(\sigma_j + 1\right) \\
+    1  & \text{if } \frac{2}{3} \left(\sigma_j + 1\right) \leq \tau_j \leq \frac{10}{3} \sigma_j - 2 \\
+    0  & \text{if } -\frac{4}{3} \left(\sigma_j - \frac{1}{48}\right) \leq \tau_j \leq \frac{4}{3} \sigma_j - 2 \\
+    -1 & \text{if } -\frac{10}{3} \left(\sigma_j - \frac{5}{96}\right) \leq \tau_j \leq -\frac{2}{3} \left(\sigma_j + 1\right) - 2 \\
+    -2 & \text{if } -\frac{16}{3} \left(\sigma_j + 1\right) - 2 < \tau_j \leq -\frac{8}{3} \left(\sigma_j + 1\right) - 2
+  \end{cases}
+\end{equation}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth, height=3.5\textwidth, keepaspectratio=true]{../figures/square_root/radix2_rds_basic_quadrants_1_4.pdf}
+    \caption{Radix-2 Basic RDS}
+    \label{fig:sqrt_radix2_basic}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth, height=3.5\textwidth, keepaspectratio=true]{../figures/square_root/radix4_rds_basic_quadrants_1_4.pdf}
+    \caption{Radix-4 Basic RDS}
+    \label{fig:sqrt_radix4_basic}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth, height=3.5\textwidth, keepaspectratio=true]{../figures/square_root/radix4_rds_optimized_quadrants_1_4.pdf}
+    \caption{Radix-4 Optimized RDS}
+    \label{fig:sqrt_radix4_optimized}
+  \end{subfigure}
+  \caption{Selection regions for the Root Digit Selector (RDS). The y-axis is the truncated residual estimate $\tau_j$ and the x-axis is the truncated partial root estimate $\sigma_j$. The regions show which root digit $s_{j+1}$ is selected. (a) and (b) show the initial overlapping boundaries (`basic') derived directly from the theory. (c) shows the final non-overlapping boundaries (`optimized') used for implementation.}
+  \label{fig:sqrt_rds}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Example selection logic table for Radix-4, showing the required range for the truncated residual estimate $\tau_j$ to select a given digit. The selection depends on the truncated divisor/root estimate ($\delta$ or $\sigma_j$). This table represents the kind of logic implemented in a PLA, derived from the analysis in Sections \ref{ssec:div_radix4} and \ref{ssec:sqrt_radix4}.}
+  \label{tab:selection_logic}
+  \begin{tabular}{|c|c|c|c|c|c|}
+    \hline
+    \textbf{$\tau_j$} & \textbf{$q_{j+1}, s_{j+1} = 2$} & \textbf{$q_{j+1}, s_{j+1} = 1$} & \textbf{$q_{j+1}, s_{j+1} = 0$} & \textbf{$q_{j+1}, s_{j+1} = -1$} & \textbf{$q_{j+1}, s_{j+1} = -2$} \\
+    \hline
+    $\delta, \sigma_j = 8$  & 24 to 49               & 8 to 23                & -8 to 7                & -26 to -9               & -50 to -27              \\
+    $\delta, \sigma_j = 9$  & 28 to 53               & 8 to 27                & -8 to 7                & -28 to -9               & -56 to -29              \\
+    $\delta, \sigma_j = 10$ & 32 to 59               & 8 to 31                & -12 to 7               & -32 to -13              & -60 to -33              \\
+    $\delta, \sigma_j = 11$ & 32 to 65               & 8 to 31                & -12 to 7               & -36 to -13              & -66 to -37              \\
+    $\delta, \sigma_j = 12$ & 36 to 69               & 12 to 35               & -12 to 11              & -36 to -13              & -72 to -37              \\
+    $\delta, \sigma_j = 13$ & 40 to 75               & 16 to 39               & -16 to 15              & -40 to -17              & -76 to -41              \\
+    $\delta, \sigma_j = 14$ & 40 to 81               & 16 to 39               & -16 to 15              & -44 to -17              & -82 to -45              \\
+    $\delta, \sigma_j = 15$ & 48 to 85               & 16 to 47               & -16 to 15              & -48 to -17              & -88 to -49              \\
+    \hline
+  \end{tabular}
+\end{table}
+
+\section{Conclusion}
+\label{sec:conclusion}
+Digit recurrence algorithms provide an elegant and efficient framework for implementing division and square root in hardware.
+Their performance stems from a core principle: the use of a redundant digit set for the result.
+This redundancy, characterized by a factor $\rho > 1/2$, creates overlapping selection regions, which enables the most critical operation—the selection of the next result digit—to be performed using fast, low-precision estimates of the internal state.
+
+In this paper, we have systematically derived the fundamental recurrence relations for both division and square root.
+For division, the recurrence is $R_{j+1} = B R_j - q_{j+1} D$, where the selection of $q_{j+1}$ depends on the shifted residual $B R_j$ and the constant divisor $D$.
+For square root, the recurrence is $R_{j+1} = B R_j - s_{j+1} (2 S_j + s_{j+1} B^{-(j+1)})$, which is more complex as the selection of $s_{j+1}$ depends on both the residual and the evolving partial root $S_j$.
+
+The design methodology for the digit selection logic was detailed through the analysis of the continuity condition, which guarantees that the uncertainty from using truncated operands does not lead to failure.
+We showed how to determine the minimum required precision for the estimates and presented the resulting selection tables for Radix-2 and Radix-4 examples.
+The analysis also revealed the increasing complexity of higher-radix implementations, particularly for square root, where iteration-dependent terms can necessitate special handling for the initial steps.
+
+Ultimately, digit recurrence methods represent a powerful trade-off between speed and complexity, forming the basis of most high-performance division and square root units in modern processors.
+
+\end{document}

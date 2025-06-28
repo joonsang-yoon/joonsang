@@ -23,13 +23,20 @@ trait ChiselModule extends ScalaModule with ScalafmtModule {
 
   object test extends ScalaTests with ScalaTest with ScalafmtModule {
     override def mvnDeps = super.mvnDeps() ++ Seq(
-      mvn"org.scalatest::scalatest:3.2.19"
+      mvn"org.scalatest::scalatest:3.2.19",
+      mvn"org.scala-lang.modules::scala-parallel-collections:1.2.0"
     )
   }
 }
 
 object TopLevelModule extends ChiselModule {
-  override def moduleDeps = Seq(ExternalModule)
+  override def moduleDeps = Seq(ExternalModule, HardFloat)
 }
 
 object ExternalModule extends ChiselModule
+
+object HardFloat extends ChiselModule {
+  override def moduleDeps = Seq(HardUtils)
+}
+
+object HardUtils extends ChiselModule

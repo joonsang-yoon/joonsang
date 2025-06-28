@@ -8,10 +8,20 @@
 .metals/
 
 # VS Code
-.vscode/
+.vscode/*
+!.vscode/
+!.vscode/settings.json
 
 # Generated files
 generated/
 
 # Build output
 out/
+
+# LaTeX auxiliary files
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.toc

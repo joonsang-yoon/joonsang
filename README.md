@@ -9,6 +9,8 @@ This project is a template for developing hardware designs using [Chisel](https:
   - `src/Elaborate.scala`: The entry point for generating SystemVerilog from Chisel designs.
 - `ExternalModule/`: A secondary module demonstrating how to organize and depend on multiple modules.
   - `src/AnotherCustomDesign.scala`: A simple module used by `TopLevelModule`.
+- `HardFloat/`: Chisel implementations of IEEE 754 floating-point operations using a "re-coded" format.
+- `HardUtils/`: Various hardware utility modules and helper functions, such as reducers and counters.
 - `scripts/setup.sh`: A comprehensive setup script for installing dependencies.
 - `Makefile`: Provides convenient commands for common tasks.
 - `build.mill.scala`: The Mill build configuration.
@@ -53,6 +55,12 @@ To generate SystemVerilog for a specific module:
 
 ```bash
 make verilog MODULE=ExternalModule.AnotherCustomDesign
+```
+
+To generate SystemVerilog for a parameterized module (e.g., from `HardFloat`):
+
+```bash
+make verilog MODULE="HardFloat.AddRecFN(8,24)"
 ```
 
 The generated files will be located in the `generated/verilog/` directory.

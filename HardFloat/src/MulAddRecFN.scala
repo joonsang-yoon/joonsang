@@ -3,6 +3,7 @@ package HardFloat
 import chisel3._
 import chisel3.util._
 import Consts._
+import HardUtils._
 
 class MulAddRecFN_interIo(expWidth: Int, sigWidth: Int) extends Bundle {
   val isSigNaNAny = Bool()

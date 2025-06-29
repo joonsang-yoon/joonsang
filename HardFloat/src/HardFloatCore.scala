@@ -2,6 +2,7 @@ package HardFloat
 
 import chisel3._
 import chisel3.util._
+import HardUtils._
 
 object Consts {
   def round_near_even = "b000".U(3.W)

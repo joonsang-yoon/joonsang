@@ -35,4 +35,8 @@ object TopLevelModule extends ChiselModule { m =>
 
 object ExternalModule extends ChiselModule
 
-object HardFloat extends ChiselModule
+object HardFloat extends ChiselModule { m =>
+  override def moduleDeps = Seq(HardUtils)
+}
+
+object HardUtils extends ChiselModule

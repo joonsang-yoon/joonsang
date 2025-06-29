@@ -3,6 +3,7 @@ package HardFloat
 import chisel3._
 import chisel3.util._
 import Consts._
+import HardUtils._
 
 class RoundAnyRawFNToRecFN(inExpWidth: Int, inSigWidth: Int, outExpWidth: Int, outSigWidth: Int, options: Int)
     extends RawModule {

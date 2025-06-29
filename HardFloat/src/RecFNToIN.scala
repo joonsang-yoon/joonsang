@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import scala.math._
 import Consts._
+import HardUtils._
 
 class RecFNToIN(expWidth: Int, sigWidth: Int, intWidth: Int) extends RawModule {
   override def desiredName = s"RecFNToIN_e${expWidth}_s${sigWidth}_i${intWidth}"

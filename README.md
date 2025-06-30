@@ -1,5 +1,10 @@
 # Chisel SoC Framework
 
+[![CI/CD](https://github.com/joonsang-yoon/joonsang/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/joonsang-yoon/joonsang/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/joonsang-yoon/joonsang)](https://github.com/joonsang-yoon/joonsang/blob/main/LICENSE)
+[![Scala](https://img.shields.io/badge/Scala-2.13.16-DC322F.svg)](https://www.scala-lang.org/)
+[![Chisel](https://img.shields.io/badge/Chisel-7.1.1-2A3172.svg)](https://www.chisel-lang.org/)
+
 This is a template repository for creating a System-on-a-Chip (SoC) using the [Chisel](https://www.chisel-lang.org/) hardware description language. It provides a basic project structure, build system, and a set of common commands to get you started with your own Chisel-based SoC design.
 
 ## Table of Contents
@@ -16,6 +21,7 @@ This is a template repository for creating a System-on-a-Chip (SoC) using the [C
   - [Available Modules](#available-modules)
     - [TopLevelModule.CustomDesign](#toplevelmodulecustomdesign)
     - [ExternalModule.AnotherCustomDesign](#externalmoduleanothercustomdesign)
+    - [HardFloat](#hardfloat)
   - [Contributing](#contributing)
   - [License](#license)
 
@@ -29,6 +35,37 @@ The project is organized into the following directory structure:
 ├── ExternalModule
 │   └── src
 │       └── AnotherCustomDesign.scala
+├── HardFloat
+│   ├── src
+│   │   ├── AddRecFN.scala
+│   │   ├── CompareRecFN.scala
+│   │   ├── DivSqrtRecF64.scala
+│   │   ├── DivSqrtRecF64_mulAddZ31.scala
+│   │   ├── DivSqrtRecFN_small.scala
+│   │   ├── HardFloatCore.scala
+│   │   ├── INToRecFN.scala
+│   │   ├── MulAddRecFN.scala
+│   │   ├── MulRecFN.scala
+│   │   ├── RecFNToIN.scala
+│   │   ├── RecFNToRecFN.scala
+│   │   └── RoundAnyRawFNToRecFN.scala
+│   └── test
+│       └── src
+│           ├── HardFloatTester.scala
+│           ├── package.scala
+│           ├── ValExec_AddRecFN.scala
+│           ├── ValExec_CompareRecFN.scala
+│           ├── ValExec_DivSqrtRecF64.scala
+│           ├── ValExec_DivSqrtRecFN_small.scala
+│           ├── ValExec_FNFromRecFN.scala
+│           ├── ValExec_INToRecFN.scala
+│           ├── ValExec_MulAddRecFN.scala
+│           ├── ValExec_MulRecFN.scala
+│           ├── ValExec_RecFNToIN.scala
+│           └── ValExec_RecFNToRecFN.scala
+├── HardUtils
+│   └── src
+│       └── BitUtils.scala
 ├── LICENSE
 ├── Makefile
 ├── mill
@@ -44,6 +81,8 @@ The project is organized into the following directory structure:
 -   `build.mill.scala`: The build script for the [Mill](https://com-lihaoyi.github.io/mill/mill/Intro_to_Mill.html) build tool.
 -   `TopLevelModule`: A Chisel module that serves as the top-level of the SoC design.
 -   `ExternalModule`: A Chisel module that is a dependency of `TopLevelModule`.
+-   `HardFloat`: A Chisel module that implements floating-point arithmetic.
+-   `HardUtils`: A Chisel module that provides utility functions.
 -   `LICENSE`: The license file for the project.
 -   `Makefile`: A set of common commands for building, testing, and cleaning the project.
 -   `mill`: The Mill build tool executable.
@@ -116,6 +155,21 @@ This module computes the sum of two 8-bit inputs and outputs the result. It also
 ### ExternalModule.AnotherCustomDesign
 
 This module adds 1 to the input.
+
+### HardFloat
+
+This module provides a set of floating-point units that can be used in your own designs. The following floating-point units are available:
+
+*   `AddRecFN`
+*   `CompareRecFN`
+*   `DivSqrtRecF64`
+*   `DivSqrtRecFN_small`
+*   `INToRecFN`
+*   `MulAddRecFN`
+*   `MulRecFN`
+*   `RecFNToIN`
+*   `RecFNToRecFN`
+*   `RoundAnyRawFNToRecFN`
 
 ## Contributing
 

@@ -95,15 +95,15 @@ def binary_formatter(bits, fractional_bits):
 
 def create_custom_colormap():
     colors = [
-        "#e6194b",  # Red (q=2)
-        "#f58231",  # Orange (q=2/q=1 overlap)
-        "#ffe119",  # Yellow (q=1)
-        "#bcf60c",  # Yellow-Green (q=1/q=0 overlap)
-        "#3cb44b",  # Green (q=0)
-        "#46f0f0",  # Cyan-Green (q=0/q=-1 overlap)
-        "#008080",  # Teal (q=-1)
-        "#4363d8",  # Blue-Cyan (q=-1/q=-2 overlap)
-        "#000080",  # Navy (q=-2)
+        "#e6194b",  # Red ($q_{j+1} = 2$)
+        "#f58231",  # Orange ($q_{j+1} \in \{1,2\}$)
+        "#ffe119",  # Yellow ($q_{j+1} = 1$)
+        "#bcf60c",  # Yellow-Green ($q_{j+1} \in \{0,1\}$)
+        "#3cb44b",  # Green ($q_{j+1} = 0$)
+        "#46f0f0",  # Cyan-Green ($q_{j+1} \in \{-1,0\}$)
+        "#008080",  # Teal ($q_{j+1} = -1$)
+        "#4363d8",  # Blue-Cyan ($q_{j+1} \in \{-2,-1\}$)
+        "#000080",  # Navy ($q_{j+1} = -2$)
     ]
     return ListedColormap(colors)
 

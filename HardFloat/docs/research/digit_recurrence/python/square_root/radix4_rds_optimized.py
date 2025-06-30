@@ -165,11 +165,11 @@ def binary_formatter(bits, fractional_bits):
 
 def create_custom_colormap():
     colors = [
-        "#e6194b",  # Red (s=2)
-        "#ffe119",  # Yellow (s=1)
-        "#3cb44b",  # Green (s=0)
-        "#008080",  # Teal (s=-1)
-        "#000080",  # Navy (s=-2)
+        "#e6194b",  # Red ($s_{j+1} = 2$)
+        "#ffe119",  # Yellow ($s_{j+1} = 1$)
+        "#3cb44b",  # Green ($s_{j+1} = 0$)
+        "#008080",  # Teal ($s_{j+1} = -1$)
+        "#000080",  # Navy ($s_{j+1} = -2$)
     ]
     return ListedColormap(colors)
 

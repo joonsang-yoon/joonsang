@@ -24,7 +24,8 @@ trait ChiselModule extends ScalaModule with ScalafmtModule {
   object test extends ScalaTests with ScalaTest with ScalafmtModule {
     override def ivyDeps = super.ivyDeps() ++ Agg(
       ivy"org.scalatest::scalatest:3.2.19",
-      ivy"edu.berkeley.cs::chiseltest:6.0.0"
+      ivy"edu.berkeley.cs::chiseltest:6.0.0",
+      ivy"org.scala-lang.modules::scala-parallel-collections:1.2.0"
     )
   }
 }

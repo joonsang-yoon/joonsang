@@ -1,6 +1,18 @@
 {
+    "[c]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": true
+    },
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": true
+    },
     "[python]": {
         "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.formatOnSave": true
+    },
+    "[yaml]": {
+        "editor.defaultFormatter": "redhat.vscode-yaml",
         "editor.formatOnSave": true
     },
     "black-formatter.args": [

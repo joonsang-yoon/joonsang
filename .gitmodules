@@ -1,0 +1,6 @@
+[submodule "HardFloat/berkeley-softfloat-3"]
+	path = HardFloat/berkeley-softfloat-3
+	url = https://github.com/ucb-bar/berkeley-softfloat-3.git
+[submodule "HardFloat/berkeley-testfloat-3"]
+	path = HardFloat/berkeley-testfloat-3
+	url = https://github.com/ucb-bar/berkeley-testfloat-3.git

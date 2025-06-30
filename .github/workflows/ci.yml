@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sdkman
+            ~/oss-cad-suite
+            ~/oss-cad-suite-*
+            ~/espresso
+          key: deps-${{ runner.os }}-${{ hashFiles('./scripts/setup.sh') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+
+      - name: Setup environment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash ./scripts/setup.sh --ci
+
+      - name: Generate Verilog
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # sbt/scala/java are available via ~/.local/bin in PATH (exported by setup.sh)
+          make verilog
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # Source OSS CAD Suite environment for yosys/nextpnr/etc variables
+          source "$HOME/oss-cad-suite/environment"
+          make test
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: generated/test_artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload generated Verilog
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-verilog
+          path: generated/verilog
+          if-no-files-found: ignore
+          retention-days: 7

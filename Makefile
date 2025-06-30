@@ -1,13 +1,18 @@
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 VERILOG_OUTPUT_DIR := $(MAKEFILE_DIR)generated/verilog
+TEST_OUTPUT_DIR := $(MAKEFILE_DIR)generated/test_artifacts
 
 PROJECT := TopLevelModule
 MODULE ?= TopLevelModule.CustomDesign
 MILL := $(MAKEFILE_DIR)mill -i -j 1
 
+export TEST_OUTPUT_DIR
+
 .DEFAULT_GOAL := help
 
 .PHONY: verilog test reformat check-format clean help
+# Internal targets
+.PHONY: _test-hardfloat
 
 verilog:
 	@if [ -z "$(MODULE)" ]; then \
@@ -22,6 +27,11 @@ verilog:
 
 test:
 	$(MILL) $(PROJECT).test
+	$(MAKE) -C $(MAKEFILE_DIR)HardFloat test
+
+# Internal target for HardFloat tests
+_test-hardfloat:
+	$(MILL) HardFloat.test
 
 reformat:
 	$(MILL) __.reformat
@@ -31,6 +41,7 @@ check-format:
 
 clean:
 	-rm -rf $(VERILOG_OUTPUT_DIR)
+	$(MAKE) -C $(MAKEFILE_DIR)HardFloat clean
 
 help:
 	@echo "================================ AVAILABLE COMMANDS ================================"

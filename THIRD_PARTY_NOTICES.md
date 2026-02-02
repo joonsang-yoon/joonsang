@@ -35,4 +35,13 @@ This file is provided for attribution and convenience. It does not change the li
 
 ---
 
+## Rocket Chip Generator (git submodule)
+
+* **Path:** `rocket-chip`
+* **Upstream fork used by this project:** [joonsang-yoon/rocket-chip](https://github.com/joonsang-yoon/rocket-chip)
+* **Pinned revision (gitlink):** `617a25f98d966894c738fa8d4287837b0098d526`
+* **License text(s):** see the license files under `rocket-chip/` (e.g., `LICENSE.Berkeley`, `LICENSE.SiFive`, `LICENSE.jtag`).
+
+---
+
 If you believe any attribution is missing or incorrect, please open an issue or pull request so we can fix it.

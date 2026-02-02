@@ -30,8 +30,49 @@ trait ChiselModule extends ScalaModule with ScalafmtModule {
   }
 }
 
+object Macros extends ChiselModule {
+  override def moduleDir = RocketChip.moduleDir / "macros"
+  override def sources = Task.Sources(
+    moduleDir / "src" / "main" / "scala"
+  )
+  override def mvnDeps = super.mvnDeps() ++ Seq(
+    mvn"org.scala-lang:scala-reflect:${scalaVersion}"
+  )
+}
+
+object BerkeleyHardfloat extends ChiselModule {
+  override def moduleDir = RocketChip.moduleDir / "dependencies" / "hardfloat" / "hardfloat"
+  override def sources = Task.Sources(
+    moduleDir / "src" / "main" / "scala"
+  )
+}
+
+object CDE extends ChiselModule {
+  override def moduleDir = RocketChip.moduleDir / "dependencies" / "cde" / "cde"
+}
+
+object Diplomacy extends ChiselModule {
+  override def moduleDir = RocketChip.moduleDir / "dependencies" / "diplomacy" / "diplomacy"
+  override def moduleDeps = Seq(CDE)
+  override def mvnDeps = super.mvnDeps() ++ Seq(
+    mvn"com.lihaoyi::sourcecode:0.3.1"
+  )
+}
+
+object RocketChip extends ChiselModule {
+  override def moduleDir = super.moduleDir / os.up / "rocket-chip"
+  override def sources = Task.Sources(
+    moduleDir / "src" / "main" / "scala"
+  )
+  override def moduleDeps = Seq(Diplomacy, CDE, BerkeleyHardfloat, Macros)
+  override def mvnDeps = super.mvnDeps() ++ Seq(
+    mvn"com.lihaoyi::mainargs:0.5.0",
+    mvn"org.json4s::json4s-jackson:4.0.5"
+  )
+}
+
 object TopLevelModule extends ChiselModule {
-  override def moduleDeps = Seq(ExternalModule, HardFloat)
+  override def moduleDeps = Seq(ExternalModule, HardInt, HardFloat)
 }
 
 object ExternalModule extends ChiselModule
@@ -40,4 +81,8 @@ object HardUtils extends ChiselModule
 
 object HardFloat extends ChiselModule {
   override def moduleDeps = Seq(HardUtils)
+}
+
+object HardInt extends ChiselModule {
+  override def moduleDeps = Seq(HardUtils, RocketChip)
 }

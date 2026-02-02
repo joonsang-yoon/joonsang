@@ -1,6 +1,7 @@
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 VERILOG_OUTPUT_DIR := $(MAKEFILE_DIR)generated/verilog
 TEST_OUTPUT_DIR := $(MAKEFILE_DIR)generated/test_artifacts
+ROCKET_CHIP_DIR := $(MAKEFILE_DIR)rocket-chip
 
 PROJECT := TopLevelModule
 MODULE ?= TopLevelModule.CustomDesign
@@ -14,6 +15,11 @@ export TEST_OUTPUT_DIR
 # Internal targets
 .PHONY: _test-hardfloat
 
+$(ROCKET_CHIP_DIR)/.git:
+	cd $(MAKEFILE_DIR) && git submodule update --init --recursive rocket-chip
+
+verilog test reformat check-format help: | $(ROCKET_CHIP_DIR)/.git
+
 verilog:
 	@MODULE_PATH="$$(echo '$(MODULE)' | sed 's/\./\//g; s/(/\_/g; s/)//g; s/,/_/g; s/ //g')"; \
 	TARGET_DIR="$(VERILOG_OUTPUT_DIR)/$$MODULE_PATH"; \
@@ -23,6 +29,7 @@ verilog:
 test:
 	$(MILL) $(PROJECT).test
 	$(MAKE) -C $(MAKEFILE_DIR)HardFloat test
+	$(MILL) HardInt.test
 
 # Internal target for HardFloat tests
 _test-hardfloat:
@@ -50,6 +57,7 @@ help:
 	@echo "                 make verilog MODULE=TopLevelModule.CustomDesign"
 	@echo "                 make verilog MODULE=ExternalModule.AnotherCustomDesign"
 	@echo "                 make verilog MODULE='HardFloat.AddRecFN(11, 53)'"
+	@echo "                 make verilog MODULE='HardInt.Radix4SRTDivider(64, true, 0)'"
 	@echo "test         : Run all tests"
 	@echo "reformat     : Reformat all source files"
 	@echo "check-format : Check formatting of all source files"

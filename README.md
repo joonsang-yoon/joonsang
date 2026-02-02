@@ -1,14 +1,14 @@
 # Chisel Arithmetic Library
 
-This snapshot turns the starter project into a floating-point arithmetic workspace centered on `HardFloat`. The lightweight demo modules and generic elaboration launcher are still present, but the main value is now the checked-in floating-point RTL, the supporting `HardUtils` library, the Berkeley-backed verification flow, and the research material that explains part of the implementation.
+This snapshot broadens the repository from a floating-point-focused tree into a mixed floating-point and integer arithmetic workspace. `HardFloat` remains central, `HardInt` adds reusable integer execution units, `HardUtils` stays the shared implementation layer, and a `rocket-chip` submodule provides the decode/constants support used by the RISC-V-oriented wrappers on the integer side.
 
-## What is in this snapshot
+## What changed in this snapshot
 
-- `HardFloat` for floating-point arithmetic, conversion, compare, divide, and square root
-- `HardUtils` for reusable arithmetic helpers such as masks, reducers, counters, and buffers
-- Berkeley SoftFloat/TestFloat submodules for reference vectors and validation utilities
-- digit-recurrence research notes, figures, and Python plot generators
-- CI, formatting, and editor configuration for day-to-day development
+- `HardFloat` still covers floating-point arithmetic, conversion, compare, divide, and square root
+- `HardInt` now adds ALU, Booth multiplication, and radix-4 SRT division blocks
+- `HardUtils` remains the shared home for masks, buffers, reducers, and final-adder helpers
+- `rocket-chip` is vendored as a library dependency for decode helpers and scalar-op constants
+- verification now has separate floating-point and integer flows
 
 ## Repository layout
 
@@ -24,11 +24,13 @@ This snapshot turns the starter project into a floating-point arithmetic workspa
 │   ├── berkeley-softfloat-3/   # git submodule
 │   ├── berkeley-testfloat-3/   # git submodule
 │   └── docs/
-│       └── research/
+├── HardInt/
+│   ├── src/
+│   └── test/
 ├── HardUtils/
 │   ├── src/
 │   └── docs/
-│       └── reference/
+├── rocket-chip/                # git submodule
 ├── .github/workflows/
 ├── scripts/
 ├── THIRD_PARTY_NOTICES.md
@@ -37,11 +39,11 @@ This snapshot turns the starter project into a floating-point arithmetic workspa
 └── mill
 ```
 
-## Core libraries
+## Main libraries
 
 ### HardFloat
 
-`HardFloat` is the main library in this revision. The source tree includes modules such as:
+The floating-point side includes modules such as:
 
 - `AddRecFN`
 - `MulRecFN`
@@ -53,37 +55,45 @@ This snapshot turns the starter project into a floating-point arithmetic workspa
 - `RecFNToRecFN`
 - `RoundAnyRawFNToRecFN`
 
-The naming follows Berkeley HardFloat conventions, so most datapath-facing modules work with **recoded floating-point values (`RecFN`)** internally.
+These modules follow Berkeley HardFloat conventions and mostly use recoded floating-point (`RecFN`) interfaces internally.
 
-Common width presets used throughout the code and tests are:
+Common width presets are:
 
 - half precision: `(5, 11)`
 - single precision: `(8, 24)`
 - double precision: `(11, 53)`
 
+### HardInt
+
+`HardInt` is new in this revision and provides reusable integer execution blocks. Included RTL modules are:
+
+- `ALU(dataWidth)` for arithmetic, logic, shifts, and compares
+- `Radix4BoothMultiplier(dataWidth, initHeight)` for Booth-based multiplication
+- `RISCVMultiplier(...)` as a request/response wrapper around the multiplier core
+- `Radix4SRTDivider(dataWidth)` for integer division and remainder generation
+- `RISCVDivider(...)` as a request/response wrapper around the divider core
+
+The shipped integer tests use Verilator harnesses that run exhaustive all-input checks for 15-bit and 16-bit configurations.
+
 ### HardUtils
 
-`HardUtils` collects small arithmetic-support blocks that are useful well beyond floating-point code. Included helpers cover:
+`HardUtils` stays the shared support layer between the floating-point and integer libraries. Included helpers cover:
 
-- `CountLeadingZeros`
-- `LowMask`
-- `OrReduceBy2` and `OrReduceBy4`
-- pipeline and skid buffers
-- 2:2, 3:2, 4:3, and 5:3 counters
-- Wallace and Dadda reduction helpers
-- concatenation-order helpers
+- `CountLeadingZeros`, `LowMask`, `OrReduceBy2`, and `OrReduceBy4`
+- compressor primitives and reduction-tree helpers
+- pipeline, skid, and iterative skid buffers
+- `FinalAdder`
+- ordering helpers such as `ConcatOrder`
 
-Reference notes for selected helpers live under `HardUtils/docs/reference/`, including [`LowMask`](HardUtils/docs/reference/LowMask.md).
+### `rocket-chip` integration
 
-### Demo modules and launcher
+The `rocket-chip` submodule is included so the integer side can reuse decode helpers and scalar-operation constants instead of duplicating that infrastructure locally.
 
-`TopLevelModule` and `ExternalModule` remain in place as small examples, and `TopLevelModule/src/Elaborate.scala` is still the entrypoint behind `make verilog`.
-
-That means the same launcher can elaborate both the demo modules and parameterized `HardFloat` blocks from the command line.
+The Mill build pulls in only the pieces it needs, so this repo uses `rocket-chip` as a library dependency rather than as a full SoC-generation flow.
 
 ## Toolchain and submodules
 
-This repository targets Linux. The setup script installs the user-local toolchain under `~/.local` and `~/.sdkman`:
+This snapshot targets Linux. The setup script installs or configures:
 
 - Java 17
 - Scala 2.13.16
@@ -91,7 +101,7 @@ This repository targets Linux. The setup script installs the user-local toolchai
 - Verilator
 - Espresso
 
-Before running the floating-point verification flow on a fresh checkout, initialize the Berkeley submodules:
+For a fresh checkout, initialize submodules once:
 
 ```bash
 make submodules
@@ -112,19 +122,31 @@ Generate the demo top level:
 make verilog MODULE=TopLevelModule.CustomDesign
 ```
 
-Generate a double-precision floating-point adder:
+Generate a floating-point adder:
 
 ```bash
 make verilog MODULE='HardFloat.AddRecFN(11, 53)'
 ```
 
-Generate the divide/square-root core for single precision:
+Generate the integer ALU:
 
 ```bash
-make verilog MODULE='HardFloat.DivSqrtRecFN(8, 24)'
+make verilog MODULE='HardInt.ALU(64)'
 ```
 
-Generated SystemVerilog is written under:
+Generate the Booth multiplier core:
+
+```bash
+make verilog MODULE='HardInt.Radix4BoothMultiplier(64, 2)'
+```
+
+Generate the radix-4 SRT divider core:
+
+```bash
+make verilog MODULE='HardInt.Radix4SRTDivider(64)'
+```
+
+Generated outputs are written under:
 
 ```text
 generated/verilog/<module path>/
@@ -133,11 +155,11 @@ generated/verilog/<module path>/
 For example:
 
 ```text
-HardFloat.AddRecFN(11, 53)
-→ generated/verilog/HardFloat/AddRecFN_11_53/
+HardInt.Radix4SRTDivider(64)
+→ generated/verilog/HardInt/Radix4SRTDivider_64/
 ```
 
-For the full launcher help, including ChiselStage options:
+For the full elaboration-wrapper help:
 
 ```bash
 make elaborate-help
@@ -145,48 +167,46 @@ make elaborate-help
 
 ## Testing and verification
 
-Run the repo-level test entrypoint:
+Run the full regression entrypoint:
 
 ```bash
 make test
 ```
 
-Run only the HardFloat regression suite:
+Run only floating-point verification:
 
 ```bash
 make test-hardfloat
 ```
 
-The HardFloat flow:
+Run only integer verification:
 
-1. initializes Berkeley SoftFloat and TestFloat when needed
-2. builds the external vector generators used by the tests
-3. emits SystemVerilog into `generated/test_artifacts/HardFloat/...`
-4. compiles the DUT and C++ harnesses with Verilator
-5. drives Berkeley-generated vectors into the design under test
+```bash
+make test-hardint
+```
 
-`HardFloat/Makefile` can also be used directly if you want to work inside the floating-point tree without going through the repo-root target.
+### HardFloat flow
+
+The floating-point flow:
+
+1. prepares Berkeley SoftFloat and TestFloat when needed
+2. emits SystemVerilog into `generated/test_artifacts/HardFloat/...`
+3. builds the Verilator model and matching C++ harnesses
+4. drives Berkeley-generated vectors through the DUT
+
+### HardInt flow
+
+The integer flow:
+
+1. elaborates the requested multiplier or divider test modules
+2. builds Verilator harnesses under `generated/test_artifacts/HardInt/...`
+3. runs exhaustive 15-bit and 16-bit stimulus from the checked-in C++ drivers
 
 Set `VCD=1` before running tests if you want Verilator waveform tracing.
 
-## Documentation and developer tooling
-
-Under `HardFloat/docs/research/digit_recurrence/` you will find:
-
-- the rendered PDF write-up
-- the LaTeX source for the document
-- Python scripts for generating radix-2 and radix-4 selector plots
-- notes for the overlap-resolution transform used by the optimized tables
-
-This snapshot also ships with:
-
-- `.clang-format` for the C/C++ harnesses
-- VS Code settings for C, C++, Python, and YAML
-- a GitHub Actions workflow in `.github/workflows/ci.yml`
-
 ## Development workflow
 
-Reformat Scala sources:
+Reformat only the project modules:
 
 ```bash
 make reformat
@@ -198,6 +218,25 @@ Check formatting without rewriting files:
 make check-format
 ```
 
+Formatting intentionally skips submodules such as `rocket-chip`.
+
+## Documentation and reference notes
+
+Floating-point research notes remain under:
+
+```text
+HardFloat/docs/research/digit_recurrence/
+```
+
+That tree includes:
+
+- the rendered PDF tutorial
+- LaTeX source
+- Python plot generators for radix-2 and radix-4 selection regions
+- overlap-resolution notes for the optimized selector tables
+
+Utility-level notes such as `HardUtils/docs/reference/LowMask.md` are also checked in.
+
 ## Tool versions
 
 - Scala: 2.13.16
@@ -207,6 +246,6 @@ make check-format
 
 ## License and third-party code
 
-Unless otherwise noted, the repository is licensed under Apache License 2.0.
+Unless noted otherwise, the repository is licensed under Apache License 2.0.
 
-Third-party code and submodules are called out separately in `THIRD_PARTY_NOTICES.md` and the license files under `HardFloat/`.
+Third-party code and submodules remain separately licensed, especially the Berkeley HardFloat/TestFloat/SoftFloat content and the `rocket-chip` submodule.

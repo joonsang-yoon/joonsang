@@ -47,6 +47,15 @@ This submodule is used by the floating-point verification flow.
 
 This submodule is used by the floating-point verification flow, including builds of `testfloat_gen` for HardFloat testing.
 
+### Rocket Chip Generator
+
+- **Local path:** `rocket-chip`
+- **Upstream fork used by this repository:** [joonsang-yoon/rocket-chip](https://github.com/joonsang-yoon/rocket-chip)
+- **Pinned revision (gitlink):** `617a25f98d966894c738fa8d4287837b0098d526`
+- **Local license files after submodule checkout:** see license files under `rocket-chip/` (for example `LICENSE.Berkeley`, `LICENSE.SiFive`, and `LICENSE.jtag`)
+
+This repository depends on the Rocket Chip submodule for functionality imported from `freechips.rocketchip`, including decode and constant definitions used by the integer-side modules.
+
 ## Repository-owned code
 
 Unless a path above or an in-file notice states otherwise, code and documentation added directly to this repository remain under the repository's default license, the **Apache License 2.0**.

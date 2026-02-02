@@ -4,3 +4,6 @@
 [submodule "HardFloat/berkeley-testfloat-3"]
 	path = HardFloat/berkeley-testfloat-3
 	url = https://github.com/ucb-bar/berkeley-testfloat-3.git
+[submodule "rocket-chip"]
+	path = rocket-chip
+	url = https://github.com/joonsang-yoon/rocket-chip.git

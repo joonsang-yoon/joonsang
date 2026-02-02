@@ -5,13 +5,13 @@
 [![Scala](https://img.shields.io/badge/Scala-2.13.16-DC322F.svg?logo=scala&logoColor=white)](https://www.scala-lang.org/)
 [![Chisel](https://img.shields.io/badge/Chisel-7.5.0-2A3172.svg)](https://www.chisel-lang.org/)
 
-This project is a modular hardware design implemented in [Chisel](https://www.chisel-lang.org/) (Constructing Hardware in a Scala Embedded Language). It demonstrates a multi-module build structure using **Mill**, featuring a top-level module, an external component library, and a comprehensive floating-point arithmetic library (**HardFloat**).
+This project is a modular hardware design implemented in [Chisel](https://www.chisel-lang.org/) (Constructing Hardware in a Scala Embedded Language). It demonstrates a multi-module build structure using **Mill**, featuring a top-level module, an external component library, and comprehensive arithmetic libraries for both floating-point (**HardFloat**) and integer (**HardInt**) operations.
 
 The project includes a robust build system, a custom elaboration script supporting parameterized module generation, and a setup script to configure the development environment.
 
 ## 📂 Project Structure
 
-The project is organized into four main Chisel modules:
+The project is organized into five main Chisel modules and dependencies:
 
 *   **TopLevelModule**: The main design entry point.
     *   `CustomDesign`: Instantiates components from other modules to demonstrate integration.
@@ -23,11 +23,17 @@ The project is organized into four main Chisel modules:
     *   **DivSqrtRecFN**: Implements Division and Square Root using digit recurrence algorithms (SRT).
     *   **Verification**: Includes a rigorous testing infrastructure using **Verilator** and **Berkeley TestFloat**.
     *   **Documentation**: Detailed research, LaTeX derivations, and Python scripts for generating digit recurrence plots (including overlap transformation logic) can be found in `HardFloat/docs/research`.
+*   **HardInt**: A library of integer arithmetic units.
+    *   **ALU**: A standard Arithmetic Logic Unit supporting basic RISC-V operations.
+    *   **Radix4BoothMultiplier**: A high-performance multiplier using Radix-4 Booth encoding and Dadda reduction. Includes a `RISCVMultiplier` wrapper with tag routing.
+    *   **Radix4SRTDivider**: An integer divider implementing the Radix-4 SRT algorithm. Includes a `RISCVDivider` wrapper with tag routing.
+    *   **Verification**: Includes C++ test harnesses for exhaustive verification via Verilator (e.g., exhaustive 15-bit and 16-bit multiplier/divider tests).
 *   **HardUtils**: A utility library providing low-level arithmetic building blocks.
     *   **BitUtils**: Bit-level manipulation utilities like `CountLeadingZeros`, `LowMask`, `OrReduceBy2`, and `OrReduceBy4`.
     *   **Counters & Reducers**: Contains counters/compressors (2:2, 3:2, 4:3, 5:3) and Wallace/Dadda reducers (both Carry-Save and Carry-Chain variants) with customizable concatenation ordering (`ConcatOrder`).
     *   **Buffers**: Pipeline buffers and skid buffers, including iterative variants (`IterativePipeBuffer`, `IterativeSkidBuffer`) for multi-cycle operations.
     *   **Documentation**: Reference documentation for utilities (e.g., `LowMask`) can be found in `HardUtils/docs/reference`.
+*   **rocket-chip**: Included as a submodule to provide utility classes (e.g., `DecodeLogic`) and standard constants.
 
 ```text
 .
@@ -41,9 +47,13 @@ The project is organized into four main Chisel modules:
 │   ├── berkeley-softfloat-3/ # Submodule: Reference software implementation
 │   ├── berkeley-testfloat-3/ # Submodule: Test vector generation
 │   └── docs/                 # Research documentation & Python plot scripts
+├── HardInt/                  # Integer arithmetic library
+│   ├── src/                  # Source code (ALU, Multiplier, Divider)
+│   └── test/                 # Scala tests and C++ Verilator harnesses
 ├── HardUtils/                # Arithmetic utilities
 │   ├── src/                  # Source code (BitUtils, Counters, Reducers, Buffers)
 │   └── docs/                 # Utility reference documentation
+├── rocket-chip/              # Submodule: Rocket Chip generator library
 ├── .github/workflows/        # CI configurations
 ├── generated/                # Output directory for SystemVerilog and Test Artifacts
 ├── scripts/                  # Setup and utility scripts
@@ -77,11 +87,11 @@ If you prefer not to use the setup script, ensure you have:
 *   **Make**
 *   **JDK 17+**
 *   **Mill** (The included `./mill` wrapper handles this automatically)
-*   **Git Submodules**: This project relies on submodules for testing. Initialize them via the Makefile:
+*   **Git Submodules**: This project relies on submodules for testing and dependencies. Initialize them via the Makefile:
     ```bash
     make submodules
     ```
-*   **Verilator** (Required for HardFloat verification)
+*   **Verilator** (Required for HardFloat and HardInt verification)
 *   **Espresso Logic Minimizer** (Required for generating optimized SRT digit selection tables via Chisel's `EspressoMinimizer`)
 *   **Python 3** (for generating research plots in `HardFloat/docs`)
 
@@ -111,10 +121,15 @@ make verilog MODULE=ExternalModule.AnotherCustomDesign
 ```
 
 **Generate a Floating-Point Unit (e.g., Double Precision Adder):**
-The `HardFloat` modules are parameterized. You can pass parameters (Exponent Width, Significand Width) directly in the command string.
 ```bash
 # Standard Double Precision: Exp=11, Sig=53
 make verilog MODULE='HardFloat.AddRecFN(11, 53)'
+```
+
+**Generate an Integer Unit (e.g., Radix-4 SRT Divider):**
+```bash
+# 64-bit Divider
+make verilog MODULE='HardInt.Radix4SRTDivider(64)'
 ```
 
 **Customizing the Output Directory:**
@@ -125,7 +140,7 @@ make verilog MODULE=TopLevelModule.CustomDesign TARGET_DIR=./my_custom_dir
 
 ### Running Tests
 
-To run all unit tests defined in the project, including the rigorous HardFloat verification suite:
+To run all unit tests defined in the project, including the rigorous HardFloat and HardInt verification suites:
 ```bash
 make test
 ```
@@ -135,15 +150,14 @@ To run *only* the HardFloat verification suite:
 make test-hardfloat
 ```
 
-**HardFloat Verification Details:**
-The `HardFloat` library is tested against the industry-standard **Berkeley TestFloat** suite. The testing process involves:
-1.  **Verilog Generation**: Chisel generates SystemVerilog for the DUT (Design Under Test).
-2.  **Verilator Compilation**: The generated Verilog is compiled into a C++ simulation model along with a custom C++ harness.
-3.  **Test Vector Generation**: `testfloat_gen` produces edge-case and random floating-point inputs.
-4.  **Comparison**: The simulation output is compared against the golden reference from `berkeley-softfloat`.
-5.  **Parallel Execution**: Tests run in parallel to speed up verification of all rounding modes and tininess detection schemes.
+To run *only* the HardInt verification suite:
+```bash
+make test-hardint
+```
 
-*Note: The first run will automatically build the SoftFloat and TestFloat libraries.*
+**Verification Details:**
+*   **HardFloat**: Tested against the industry-standard **Berkeley TestFloat** suite.
+*   **HardInt**: Tested using custom C++ harnesses that perform exhaustive verification against software models.
 
 ### Formatting Code
 
@@ -191,7 +205,7 @@ This project utilizes GitHub Actions for Continuous Integration. The workflow is
 *   Sets up the environment (Java, Scala, OSS CAD Suite, and Espresso).
 *   Checks code formatting.
 *   Generates Verilog for the top-level design.
-*   Runs the full test suite (including HardFloat verification).
+*   Runs the full test suite (including HardFloat and HardInt verification).
 *   Uploads generated Verilog and test artifacts as build artifacts.
 
 ## 📦 Dependencies
@@ -201,6 +215,7 @@ This project utilizes GitHub Actions for Continuous Integration. The workflow is
 *   **Mill**: 1.0.6 (via wrapper)
 *   **Verilator**: (System dependency for testing)
 *   **Espresso**: (System dependency for logic minimization)
+*   **Rocket Chip**: (Included as submodule)
 *   **Berkeley SoftFloat/TestFloat**: (Included as submodules)
 
 ## 📄 License
@@ -214,5 +229,6 @@ This project contains third-party components that are licensed separately:
 - **`HardFloat/`**: contains code derived from **Berkeley HardFloat** and is licensed under the Berkeley HardFloat license (BSD 3‑Clause–style; Regents of the University of California). See `HardFloat/LICENSE`.
 - **`HardFloat/berkeley-softfloat-3/`** (git submodule): licensed separately; see `HardFloat/berkeley-softfloat-3/COPYING.txt`.
 - **`HardFloat/berkeley-testfloat-3/`** (git submodule): licensed separately; see `HardFloat/berkeley-testfloat-3/COPYING.txt`.
+- **`rocket-chip/`** (git submodule): licensed separately; see the license file(s) under `rocket-chip/` (e.g., `LICENSE.Berkeley`, `LICENSE.SiFive`, `LICENSE.jtag`).
 
 For a consolidated component list and attributions, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

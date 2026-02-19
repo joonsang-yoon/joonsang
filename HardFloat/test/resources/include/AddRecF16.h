@@ -1,1 +1,2 @@
-MulAddRecF16_add.h
+#define FLEN 16
+#include "AddRecFN.h"

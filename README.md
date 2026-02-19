@@ -29,7 +29,7 @@ The project is organized into five main Chisel modules and dependencies:
     *   **Radix4SRTDivider**: An integer divider implementing the Radix-4 SRT algorithm.
     *   **Verification**: Includes C++ test harnesses for exhaustive and randomized testing via Verilator.
 *   **HardUtils**: A utility library providing low-level arithmetic building blocks.
-    *   Contains compressors (3:2, 4:2), Wallace/Dadda reducers, and pipeline buffers.
+    *   Contains compressors (3:2, 4:2), Wallace/Dadda reducers, pipeline buffers, and interconnect components (Crossbar Switch, Arbiters).
 *   **rocket-chip**: Included as a submodule to provide utility classes (e.g., `DecodeLogic`) and standard constants.
 
 ```text
@@ -46,7 +46,7 @@ The project is organized into five main Chisel modules and dependencies:
 │   ├── src/                  # Source code (ALU, Multiplier, Divider)
 │   └── test/                 # Scala tests and C++ Verilator harnesses
 ├── HardUtils/                # Arithmetic utilities
-│   └── src/                  # Source code (Counters, Reducers, Buffers)
+│   └── src/                  # Source code (Counters, Reducers, Buffers, Interconnect)
 ├── TopLevelModule/           # Main module
 │   └── src/                  # Source code (CustomDesign.scala, Elaborate.scala)
 ├── rocket-chip/              # Submodule: Rocket Chip generator library

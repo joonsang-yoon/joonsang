@@ -32,6 +32,7 @@ The project is organized into five main Chisel modules and dependencies:
     *   **BitUtils**: Bit-level manipulation utilities like `CountLeadingZeros`, `LowMask`, `OrReduceBy2`, and `OrReduceBy4`.
     *   **Counters & Reducers**: Contains counters/compressors (2:2, 3:2, 4:3, 5:3) and Wallace/Dadda reducers (both Carry-Save and Carry-Chain variants) with customizable concatenation ordering (`ConcatOrder`).
     *   **Buffers**: Pipeline buffers and skid buffers, including iterative variants (`IterativePipeBuffer`, `IterativeSkidBuffer`) for multi-cycle operations.
+    *   **Interconnect**: Crossbar Switches and Arbiters (Fixed Priority, Round Robin, Locking).
     *   **Documentation**: Reference documentation for utilities (e.g., `LowMask`) can be found in `HardUtils/docs/reference`.
 *   **rocket-chip**: Included as a submodule to provide utility classes (e.g., `DecodeLogic`) and standard constants.
 
@@ -51,7 +52,7 @@ The project is organized into five main Chisel modules and dependencies:
 │   ├── src/                  # Source code (ALU, Multiplier, Divider)
 │   └── test/                 # Scala tests and C++ Verilator harnesses
 ├── HardUtils/                # Arithmetic utilities
-│   ├── src/                  # Source code (BitUtils, Counters, Reducers, Buffers)
+│   ├── src/                  # Source code (BitUtils, Counters, Reducers, Buffers, Interconnect)
 │   └── docs/                 # Utility reference documentation
 ├── rocket-chip/              # Submodule: Rocket Chip generator library
 ├── .github/workflows/        # CI configurations

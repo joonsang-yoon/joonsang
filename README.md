@@ -19,7 +19,7 @@ The project is organized into five main Chisel modules and dependencies:
 *   **ExternalModule**: Contains reusable hardware components.
     *   `AnotherCustomDesign`: A module that adds 1 to an 8-bit input.
 *   **HardFloat**: A library of parameterized IEEE 754 floating-point arithmetic units.
-    *   **Core Units**: Add/Sub, Multiply, Fused Multiply-Add (FMA), Compare, and Conversions.
+    *   **Core Units**: Add/Sub, Compare, Conversions, and pipelined Booth-Dadda Multipliers/FMA with decoupled interfaces.
     *   **DivSqrtRecFN**: Implements Division and Square Root using digit recurrence algorithms (SRT).
     *   **Verification**: Includes a rigorous testing infrastructure using **Verilator** and **Berkeley TestFloat**.
     *   **Documentation**: Detailed research, LaTeX derivations, and Python scripts for generating digit recurrence plots (including overlap transformation logic) can be found in `HardFloat/docs/research`.

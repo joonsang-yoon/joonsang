@@ -1,14 +1,14 @@
 # Chisel Arithmetic Library
 
-This snapshot keeps the mixed floating-point and integer scope from the previous revision, but it changes the floating-point multiply path in a major way. `MulRecFN` and `MulAddRecFN` are now staged, latency-bearing modules with `Decoupled` request/response interfaces, an explicit split between pre-processing and reduction stages, and tests that align expected values with pipelined responses.
+This snapshot keeps the staged floating-point and integer execution blocks from the previous revision and expands `HardUtils` with a reusable `Decoupled` crossbar/switch. The repository is now useful both as an arithmetic library and as a source of small, integration-friendly building blocks for larger Chisel systems.
 
 ## What changed in this snapshot
 
-- `MulRecFN(expWidth, sigWidth, initHeight)` is now a staged multiplier instead of a direct combinational-style wrapper
-- `MulAddRecFN(expWidth, sigWidth, initHeight)` follows the same staged, handshake-driven structure
-- the multiply path is organized around pre-stage logic, Dadda-style reduction, `FinalAdder`, and post/rounding logic
-- HardFloat tests queue expected results so they can compare cleanly against latency-bearing outputs
-- `HardInt` and the rest of the repository stay available as in the previous revision
+- `HardFloat` keeps the staged multiplier and fused multiply-add datapaths introduced previously
+- `HardInt` still provides ALU, Booth multiplier, and radix-4 SRT divider implementations
+- `HardUtils` now adds a generic unicast `XbarSwitch` for `Decoupled` traffic
+- named example wrappers make the switch easy to elaborate directly for RTL inspection
+- the existing floating-point, integer, and documentation flows remain in place
 
 ## Repository layout
 
@@ -43,7 +43,7 @@ This snapshot keeps the mixed floating-point and integer scope from the previous
 
 ### HardFloat
 
-The floating-point library still includes the expected arithmetic and conversion blocks:
+The floating-point library still covers:
 
 - `AddRecFN`
 - `MulRecFN`
@@ -55,26 +55,11 @@ The floating-point library still includes the expected arithmetic and conversion
 - `RecFNToRecFN`
 - `RoundAnyRawFNToRecFN`
 
-The multiply path is the main difference in this snapshot.
-
-`MulRecFN(expWidth, sigWidth, initHeight)` and `MulAddRecFN(expWidth, sigWidth, initHeight)` are now latency-bearing modules with:
-
-- explicit request/response handshakes
-- dedicated pre- and post-processing stages
-- internal reduction stages
-- Dadda-style partial-product reduction and `FinalAdder`-based finishing logic
-
-That makes the codebase much better suited to pipelined execution units than to purely combinational wrappers.
-
-Typical width presets remain:
-
-- half precision: `(5, 11)`
-- single precision: `(8, 24)`
-- double precision: `(11, 53)`
+`MulRecFN(expWidth, sigWidth, initHeight)` and `MulAddRecFN(expWidth, sigWidth, initHeight)` remain staged, handshake-driven modules intended for latency-bearing datapaths rather than purely combinational wrappers.
 
 ### HardInt
 
-`HardInt` continues to provide the integer execution blocks introduced in the previous snapshot:
+The integer side includes:
 
 - `ALU(dataWidth)`
 - `Radix4BoothMultiplier(dataWidth, initHeight)`
@@ -82,17 +67,30 @@ Typical width presets remain:
 - `Radix4SRTDivider(dataWidth)`
 - `RISCVDivider(...)`
 
-These modules still rely on `rocket-chip` decode/constants support and keep the same Verilator-backed test flow.
+These blocks continue to lean on the `rocket-chip` submodule for decode/constants support and keep the same Verilator-based regression flow.
 
 ### HardUtils
 
-`HardUtils` remains the shared implementation layer. Relevant helpers in this snapshot include:
+`HardUtils` now covers both arithmetic support logic and data-movement infrastructure.
 
-- bit utilities such as `CountLeadingZeros`, `LowMask`, `OrReduceBy2`, and `OrReduceBy4`
-- reduction-tree helpers and compressor primitives
+Arithmetic-facing helpers include:
+
+- `CountLeadingZeros`, `LowMask`, `OrReduceBy2`, and `OrReduceBy4`
+- compressor primitives and reduction-tree helpers
 - pipeline, skid, and iterative skid buffers
 - `FinalAdder`
-- concatenation-order helpers
+- `ConcatOrder`
+
+New in this snapshot is **`XbarSwitch`**, a generic unicast crossbar for `Decoupled` traffic.
+
+The source file introduces:
+
+- `XbarSwitchReq` and `XbarSwitchIO` bundle definitions
+- the generic `XbarSwitch` module itself
+- fixed-priority, round-robin, locking, and locking-round-robin wrappers
+- elaboratable example modules such as `FixedPriorityXbarSwitchExample`
+
+In practice, `XbarSwitch` is the sort of utility you embed inside a larger design rather than use as a final top level, but the example wrappers make it easy to inspect the generated RTL directly.
 
 ## Toolchain and submodules
 
@@ -104,7 +102,7 @@ This repository targets Linux. The setup flow installs or configures:
 - Verilator
 - Espresso
 
-Initialize the submodules on a new checkout:
+For a fresh checkout:
 
 ```bash
 make submodules
@@ -125,41 +123,40 @@ Generate the demo module:
 make verilog MODULE=TopLevelModule.CustomDesign
 ```
 
-Generate the staged floating-point multiplier:
+Generate the floating-point multiplier:
 
 ```bash
 make verilog MODULE='HardFloat.MulRecFN(11, 53, 3)'
 ```
 
-Generate the staged fused multiply-add block:
+Generate the fused multiply-add block:
 
 ```bash
 make verilog MODULE='HardFloat.MulAddRecFN(11, 53, 3)'
 ```
 
-Generate the radix-4 Booth integer multiplier:
+Generate the integer ALU:
 
 ```bash
-make verilog MODULE='HardInt.Radix4BoothMultiplier(64, 2)'
+make verilog MODULE='HardInt.ALU(64)'
 ```
 
-Generate the radix-4 SRT divider:
+Generate the integer divider:
 
 ```bash
 make verilog MODULE='HardInt.Radix4SRTDivider(64)'
+```
+
+Generate one of the checked-in crossbar examples:
+
+```bash
+make verilog MODULE='HardUtils.FixedPriorityXbarSwitchExample'
 ```
 
 Generated SystemVerilog is written under:
 
 ```text
 generated/verilog/<module path>/
-```
-
-For example:
-
-```text
-HardFloat.MulRecFN(11, 53, 3)
-→ generated/verilog/HardFloat/MulRecFN_11_53_3/
 ```
 
 For the full wrapper help, including ChiselStage options:
@@ -170,39 +167,31 @@ make elaborate-help
 
 ## Testing and verification
 
-Run the full regression entrypoint:
+Run everything:
 
 ```bash
 make test
 ```
 
-Run only floating-point verification:
+Floating-point only:
 
 ```bash
 make test-hardfloat
 ```
 
-Run only integer verification:
+Integer only:
 
 ```bash
 make test-hardint
 ```
 
-### Floating-point validation notes
+The floating-point flow still uses Berkeley SoftFloat/TestFloat-generated vectors, while the integer flow still uses the checked-in Verilator harnesses for exhaustive 15-bit and 16-bit regression checks.
 
-The HardFloat regression flow has been updated to match the staged multiplier and FMA implementations. The test modules queue expected values so the harness can compare them against the pipelined request/response outputs cleanly.
-
-That keeps the Berkeley-vector-based reference flow in place while supporting a more realistic latency-bearing implementation.
-
-### Integer validation notes
-
-The integer side continues to elaborate Verilator harnesses under `generated/test_artifacts/HardInt/...` and runs exhaustive 15-bit and 16-bit combinations for the shipped multiplier/divider checks.
-
-Set `VCD=1` before running tests if you want waveform tracing from the Verilator flow.
+Set `VCD=1` before running tests if you want Verilator waveform tracing.
 
 ## Development workflow
 
-Reformat only the project modules:
+Reformat project Scala sources:
 
 ```bash
 make reformat
@@ -214,22 +203,19 @@ Check formatting without rewriting files:
 make check-format
 ```
 
-Formatting is intentionally limited to the project code and does not recurse into `rocket-chip`.
+Formatting remains intentionally restricted to the project code and does not recurse into `rocket-chip`.
 
 ## Documentation and reference notes
 
-The digit-recurrence write-up remains available under:
+Floating-point research material remains available under:
 
 ```text
 HardFloat/docs/research/digit_recurrence/
 ```
 
-That directory includes:
+That tree includes the rendered PDF, LaTeX source, Python plot generators, and notes for the optimized overlap-resolution transform.
 
-- rendered PDF documentation
-- LaTeX source
-- Python plot generators for radix-2 and radix-4 selector tables
-- notes describing the deterministic overlap-resolution transform
+Utility-level notes such as `HardUtils/docs/reference/LowMask.md` are also checked in.
 
 ## Tool versions
 
@@ -242,4 +228,4 @@ That directory includes:
 
 Unless noted otherwise, the repository is licensed under Apache License 2.0.
 
-Third-party code and submodules remain separately licensed, especially the Berkeley floating-point sources and `rocket-chip`.
+Third-party code and submodules remain separately licensed, especially the Berkeley floating-point sources and `rocket-chip`. See `THIRD_PARTY_NOTICES.md` for the attribution summary.

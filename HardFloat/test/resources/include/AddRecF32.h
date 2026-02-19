@@ -1,1 +1,2 @@
-MulAddRecF32_add.h
+#define FLEN 32
+#include "AddRecFN.h"

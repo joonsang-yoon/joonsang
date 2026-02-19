@@ -19,7 +19,7 @@ The project is organized into five main Chisel modules and dependencies:
     *   `CustomDesign`: Instantiates components from other modules to demonstrate integration.
     *   `Elaborate`: A custom entry point for generating SystemVerilog using CIRCT.
 *   **HardFloat**: A library of parameterized IEEE 754 floating-point arithmetic units.
-    *   **Core Units**: Add/Sub, Multiply, Fused Multiply-Add (FMA), Compare, and Conversions.
+    *   **Core Units**: Add/Sub, Compare, Conversions, and pipelined Booth-Dadda Multipliers/FMA with decoupled interfaces.
     *   **DivSqrtRecFN**: Implements Division and Square Root using digit recurrence algorithms (SRT).
     *   **Verification**: Includes a rigorous testing infrastructure using **Verilator** and **Berkeley TestFloat**.
     *   **Documentation**: Detailed research and derivation for the digit recurrence algorithms can be found in `HardFloat/docs/research`.
